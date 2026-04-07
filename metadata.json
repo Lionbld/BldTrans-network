@@ -1,0 +1,5 @@
+{
+  "name": "BLD Trans Network",
+  "description": "Un tableau de bord complet de gestion de réseau pour les agences de transfert d'argent, gérant les agents, les transactions et les rapports de liquidité.",
+  "requestFramePermissions": []
+}

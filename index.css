@@ -1,0 +1,6 @@
+/* Global Styles */
+@layer base {
+  body {
+    @apply antialiased;
+  }
+}
