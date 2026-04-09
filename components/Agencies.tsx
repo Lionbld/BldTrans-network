@@ -18,8 +18,10 @@ import {
   Loader2,
   Phone,
   Building,
-  ShieldCheck
+  ShieldCheck,
+  Wallet
 } from 'lucide-react';
+import CashMovementModal from './modals/CashMovementModal';
 
 const Agencies = () => {
   const { showToast } = useToast();
@@ -35,6 +37,7 @@ const Agencies = () => {
   const [selectedAgency, setSelectedAgency] = useState<Agence | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [isCashModalOpen, setIsCashModalOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -139,6 +142,54 @@ const Agencies = () => {
       fetchData();
     } else {
       showToast('error', 'Action impossible', error.message);
+    }
+  };
+
+  const handleOpenCash = (agency: Agence) => {
+    setSelectedAgency(agency);
+    setIsCashModalOpen(true);
+    setActiveMenu(null);
+  };
+
+  const handleCashMovementSubmit = async (data: { type: string, montant: number, motif: string }) => {
+    if (!selectedAgency) return;
+    setIsSubmitting(true);
+
+    try {
+      let table = '';
+      let payload: any = {
+        montant: data.montant
+      };
+
+      if (data.type === 'report') {
+        table = 'report';
+        payload.agence_report = selectedAgency.id;
+        payload.description = data.motif;
+        payload.date_creation = new Date().toISOString();
+      } else if (data.type === 'plus') {
+        table = 'mouvementplus';
+        payload.agence_mouvplus = selectedAgency.id;
+        payload.motif = data.motif;
+        payload.date_mouvement = new Date().toISOString();
+      } else { // minus
+        table = 'mouvementminus';
+        payload.agence_mouvmoins = selectedAgency.id;
+        payload.motif = data.motif;
+        payload.date_mouvement = new Date().toISOString();
+      }
+
+      const { error } = await supabase.from(table).insert([payload]);
+      
+      if (error) throw error;
+
+      showToast('success', 'Opération réussie', `Le mouvement de caisse a été enregistré pour ${selectedAgency.nom}.`);
+      setIsCashModalOpen(false);
+      fetchData();
+    } catch (err: any) {
+      console.error("Erreur CashMovement:", err);
+      showToast('error', 'Erreur de sauvegarde', err.message || 'Impossible d\'enregistrer le mouvement.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -251,6 +302,13 @@ const Agencies = () => {
                           >
                             <Trash2 size={14} /> Supprimer
                           </button>
+                          <div className="h-px bg-slate-100 dark:bg-slate-800 my-1 mx-4"></div>
+                          <button
+                            onClick={() => handleOpenCash(agency)}
+                            className="w-full text-left px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/10 flex items-center gap-3 transition-colors"
+                          >
+                            <Wallet size={14} /> Gérer la Caisse
+                          </button>
                         </div>
                       )}
                     </div>
@@ -302,6 +360,14 @@ const Agencies = () => {
         villes={villes}
         agency={selectedAgency}
         mode={modalMode}
+      />
+
+      <CashMovementModal
+        isOpen={isCashModalOpen}
+        onClose={() => setIsCashModalOpen(false)}
+        onSubmit={handleCashMovementSubmit}
+        isSubmitting={isSubmitting}
+        agencyName={selectedAgency?.nom || ''}
       />
 
       <ConfirmModal
