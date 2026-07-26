@@ -1,6 +1,83 @@
-/* Global Styles */
+@import "tailwindcss";
+
 @layer base {
-  body {
-    @apply antialiased;
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-display: 'Plus Jakarta Sans', 'Inter', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
   }
+
+  body {
+    font-family: var(--font-sans);
+    @apply bg-slate-50 text-slate-900 dark:bg-[#060612] dark:text-slate-100 antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-300;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Custom Utilities & Glassmorphism */
+.glass-panel {
+  @apply bg-white/80 dark:bg-[#0f0f23]/80 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800/80 shadow-sm;
+}
+
+.glass-card {
+  @apply bg-white dark:bg-[#0f0f23] border border-slate-200/60 dark:border-slate-800/60 shadow-sm hover:shadow-xl transition-all duration-300;
+}
+
+.btn-primary {
+  @apply bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-semibold shadow-lg shadow-indigo-500/25 active:scale-95 transition-all duration-200 rounded-xl px-5 py-2.5 flex items-center justify-center gap-2;
+}
+
+.btn-secondary {
+  @apply bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold active:scale-95 transition-all duration-200 rounded-xl px-5 py-2.5 flex items-center justify-center gap-2 border border-slate-200/50 dark:border-slate-700/50;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #1e293b;
+}
+
+/* Animations Keyframes */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleUp {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-scale-up {
+  animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
 }

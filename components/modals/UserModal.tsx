@@ -25,6 +25,7 @@ const UserModal = ({
         user_agent: '',
         email: '',
         phone: '',
+        password: '',
         agence_agens: '',
         envoi: true,
         admin: false,
@@ -37,16 +38,18 @@ const UserModal = ({
                 user_agent: agent.user_agent || '',
                 email: agent.email || '',
                 phone: agent.phone || '',
+                password: '',
                 agence_agens: agent.agence_agens?.toString() || '',
                 envoi: agent.envoi,
                 admin: agent.admin,
-                superadmin: agent.superadmin
+                superadmin: agent.superadmin || false
             });
         } else {
             setFormData({
                 user_agent: '',
                 email: '',
                 phone: '',
+                password: '',
                 agence_agens: '',
                 envoi: true,
                 admin: false,
@@ -108,6 +111,21 @@ const UserModal = ({
                             </div>
                         </div>
 
+                        {mode === 'create' && (
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-2 tracking-widest">
+                                    Mot de passe initial (min. 6 caractères)
+                                </label>
+                                <input
+                                    type="password" required minLength={6}
+                                    value={formData.password}
+                                    onChange={e => setFormData({ ...formData, password: e.target.value })}
+                                    placeholder="••••••••"
+                                    className="w-full px-6 py-4 rounded-[2rem] border-2 border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-black focus:border-primary-500 outline-none transition-all shadow-inner"
+                                />
+                            </div>
+                        )}
+
                         <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 ml-2 tracking-widest">Agence Assignée</label>
                             <select
@@ -144,16 +162,6 @@ const UserModal = ({
                                         className="w-5 h-5 rounded-md text-purple-600 focus:ring-purple-500 border-slate-300"
                                     />
                                     <span className="text-[9px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide">Admin Agence</span>
-                                </label>
-
-                                <label className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 cursor-pointer hover:border-amber-200 transition-colors col-span-full">
-                                    <input
-                                        type="checkbox"
-                                        checked={formData.superadmin}
-                                        onChange={e => setFormData({ ...formData, superadmin: e.target.checked })}
-                                        className="w-5 h-5 rounded-md text-amber-600 focus:ring-amber-500 border-slate-300"
-                                    />
-                                    <span className="text-[9px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide">Super Administrateur Réseau</span>
                                 </label>
                             </div>
                         </div>

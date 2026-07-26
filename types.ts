@@ -14,6 +14,9 @@ export interface Agence {
   ville?: { name: string };
   balance?: number; // Calculated from movements
   usage_today?: number; // Calculated from RPC
+  report_matin?: number; // Opening balance / Report du matin
+  volume_today?: number; // Total volume réalisé dans la journée
+  agents_count?: number; // Nombre d'agents rattachés à cette agence
 }
 
 // Matching public.agents
@@ -24,9 +27,9 @@ export interface Agent {
   phone: string;
   email: string;
   created_at: string;
-  envoi: boolean; // Permission to send
+  envoi: boolean; // Permission d'effectuer des envois de transferts
   admin: boolean;
-  user_agent: string | null; // Fullname
+  user_agent: string | null; // Nom complet (peut être null avant saisie)
   superadmin: boolean;
 }
 
@@ -44,7 +47,7 @@ export interface Client {
 export interface Transfert {
   id: number;
   code: string;
-  etat_trans: boolean; // true usually means completed/available, context depends
+  etat_trans: boolean; // true = EN ATTENTE (non servi), false = déjà servi
   expediteur_id: number | null; // FK to clients.ids
   destinataire_id: number | null; // FK to clients.ids
   montant: number;
@@ -60,6 +63,7 @@ export interface Transfert {
   expediteur_name?: string;
   destinataire_name?: string;
   agence_name?: string;
+  agence_id?: number | null; // Computed: extracted from agent_envoi.agence_agens for unique grouping
   agent_envoi_name?: string;
   agent_servi_name?: string;
 
@@ -105,6 +109,8 @@ export interface Depense {
   agence_name?: string;
 }
 
+// NOTE: L'app agent (bld-trans) utilise un type `Mouvement` unifié avec `type: 'plus'|'minus'`.
+// Cette app admin conserve volontairement deux interfaces séparées (Option A - décision de synchronisation).
 // Matching public.mouvementplus
 export interface MouvementPlus {
   id: number;
@@ -217,6 +223,8 @@ export interface MonthlyReportRPC {
 // Matching public.system_settings
 export interface SystemSettings {
   id: number;
+  network_name?: string;
+  support_phone?: string;
   maintenance_mode: boolean;
   commission_percent: number;
   frais_fixe_min: number;

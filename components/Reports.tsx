@@ -8,7 +8,8 @@ import {
     Printer, CalendarDays, CalendarRange, Trophy, Percent, Activity, Download
 } from 'lucide-react';
 import {
-    exportDailyPdf, exportWeeklyPdf, exportMonthlyPdf
+    exportDailyPdf, exportWeeklyPdf, exportMonthlyPdf,
+    type DailyPdfData,
 } from '../utils/reportPdf';
 
 // ——— CSV Export helper ———
@@ -38,22 +39,14 @@ const getMonday = (d: Date) => { const day = d.getDay(); const diff = d.getDate(
 
 // ——— StatCard ———
 const StatCard = ({ label, value, icon: Icon, color, bg }: { label: string; value: string; icon: any; color: string; bg: string }) => (
-    <div className="bg-white dark:bg-slate-900 rounded-[2rem] border border-slate-200 dark:border-slate-800 p-6 flex items-center gap-5 shadow-sm hover:shadow-lg hover:scale-[1.02] transition-all duration-300">
-        <div className={`w-14 h-14 ${bg} rounded-2xl flex items-center justify-center shrink-0 shadow-inner`}>
-            <Icon size={24} className={color} />
+    <div className="glass-card rounded-2xl p-5 flex items-center gap-4">
+        <div className={`w-12 h-12 ${bg} rounded-xl flex items-center justify-center shrink-0 border border-slate-200/50 dark:border-slate-800/50`}>
+            <Icon size={22} className={color} />
         </div>
         <div className="min-w-0">
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] font-black mb-1">{label}</p>
-            <p className="text-xl font-black text-slate-900 dark:text-white truncate tracking-tighter">{value}</p>
+            <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">{label}</p>
+            <p className="text-xl font-extrabold text-slate-900 dark:text-white truncate font-mono">{value}</p>
         </div>
-    </div>
-);
-
-// ——— Empty state ———
-const EmptyState = ({ label }: { label: string }) => (
-    <div className="text-center py-16 text-slate-400 dark:text-slate-600">
-        <BarChart3 size={48} className="mx-auto mb-3 opacity-30" />
-        <p className="font-black uppercase tracking-widest text-xs">{label}</p>
     </div>
 );
 
@@ -114,7 +107,6 @@ const Reports = () => {
 
     const selectedAgencyName = selectedAgency ? agencies.find(a => a.id === selectedAgency)?.nom || null : null;
 
-    // ——— Load agencies list (once) ———
     useEffect(() => {
         const loadAgencies = async () => {
             setLoadingAgencies(true);
@@ -132,7 +124,6 @@ const Reports = () => {
         loadAgencies();
     }, []);
 
-    // ——— Fetch daily report from RPC ———
     const fetchDaily = useCallback(async () => {
         setLoadingDaily(true);
         try {
@@ -151,7 +142,6 @@ const Reports = () => {
         }
     }, [selectedDate, selectedAgency]);
 
-    // ——— Fetch weekly report from RPC ———
     const fetchWeekly = useCallback(async () => {
         setLoadingWeekly(true);
         try {
@@ -171,7 +161,6 @@ const Reports = () => {
         }
     }, [weekStart, weekEnd, selectedAgency]);
 
-    // ——— Fetch monthly report from RPC ———
     const fetchMonthly = useCallback(async () => {
         setLoadingMonthly(true);
         try {
@@ -192,17 +181,14 @@ const Reports = () => {
         }
     }, [selectedMonth, selectedAgency]);
 
-    // Fetch active tab data when dependencies change
     useEffect(() => { if (tab === 'daily') fetchDaily(); }, [tab, selectedDate, selectedAgency]);
     useEffect(() => { if (tab === 'weekly') fetchWeekly(); }, [tab, weekStart, weekEnd, selectedAgency]);
     useEffect(() => { if (tab === 'monthly') fetchMonthly(); }, [tab, selectedMonth, selectedAgency]);
 
-    // Also fetch on tab switch if we don't have data
     const handleTabChange = (newTab: TabId) => {
         setTab(newTab);
     };
 
-    // ——— Manual refresh ———
     const handleRefresh = () => {
         showToast('info', 'Actualisation...', 'Recalcul en cours.');
         if (tab === 'daily') fetchDaily();
@@ -210,8 +196,31 @@ const Reports = () => {
         else fetchMonthly();
     };
 
-    // ——— PDF EXPORT ———
-    const handleExportDaily = () => {
+    const handleExportDaily = async () => {
+        showToast('info', 'Préparation PDF...', 'Chargement des transactions en cours.');
+
+        let transactions: DailyPdfData['transactions'] = [];
+        try {
+            const { data: txData, error: txError } = await supabase.rpc('get_daily_transactions', {
+                p_date: selectedDate,
+                p_agence_id: selectedAgency ?? null,
+            });
+            if (txError) throw txError;
+            if (txData) {
+                transactions = (txData as any[]).map(t => ({
+                    code: t.code,
+                    montant: Number(t.montant),
+                    frais: Number(t.frais),
+                    expediteur: t.expediteur,
+                    destinataire: t.destinataire,
+                    agent: t.agent,
+                    type: t.type_op as 'envoi' | 'service',
+                }));
+            }
+        } catch (err: any) {
+            console.warn('get_daily_transactions non disponible, PDF sans détail lignes:', err.message);
+        }
+
         const agenciesDetail = dailyData.agencies_detail?.map(a => ({
             name: a.name,
             report: a.opening_balance,
@@ -229,8 +238,8 @@ const Reports = () => {
             agencyName: selectedAgencyName,
             date: selectedDate,
             report: dailyData.opening_balance,
-            services: dailyData.nb_services,
-            envois: dailyData.nb_envois,
+            services: dailyData.total_services_montant,
+            envois: dailyData.total_envois_montant,
             depenses: dailyData.total_depenses,
             mouvPlus: dailyData.total_mouv_plus,
             mouvMinus: dailyData.total_mouv_minus,
@@ -238,7 +247,7 @@ const Reports = () => {
             revenuNet: dailyData.revenu_net,
             totalEnvoisMontant: dailyData.total_envois_montant,
             totalServicesMontant: dailyData.total_services_montant,
-            transactions: [],
+            transactions,
             agenciesDetail,
         });
     };
@@ -286,17 +295,63 @@ const Reports = () => {
         });
     };
 
-    // ——— CSV EXPORT ———
-    const handleExportCsvDaily = () => {
+    const handleExportCsvDaily = async () => {
         const agName = selectedAgencyName || 'Toutes';
         const details = dailyData.agencies_detail ?? [];
-        exportCsv(
-            `rapport-journalier-${selectedDate}-${agName}.csv`,
-            ['Agence', 'Nb Envois', 'Montant Envois ($)', 'Frais ($)', 'Nb Services', 'Montant Services ($)', 'Dépenses ($)', 'Mouv+ ($)', 'Mouv- ($)', 'Solde ($)'],
-            details.length > 0
-                ? details.map(a => [a.name, a.nb_envois, a.envois, a.frais, a.nb_services, a.services, a.depenses, a.mouv_plus, a.mouv_minus, a.solde])
-                : [['(Agence sélectionnée)', dailyData.nb_envois, dailyData.total_envois_montant, dailyData.total_frais, dailyData.nb_services, dailyData.total_services_montant, dailyData.total_depenses, dailyData.total_mouv_plus, dailyData.total_mouv_minus, dailyData.solde]]
-        );
+        showToast('info', 'Préparation CSV...', 'Chargement des détails en cours.');
+
+        let transactions: DailyPdfData['transactions'] = [];
+        try {
+            const { data: txData, error: txError } = await supabase.rpc('get_daily_transactions', {
+                p_date: selectedDate,
+                p_agence_id: selectedAgency ?? null,
+            });
+            if (txError) throw txError;
+            if (txData) {
+                transactions = (txData as any[]).map(t => ({
+                    code: t.code, montant: Number(t.montant), frais: Number(t.frais),
+                    expediteur: t.expediteur, destinataire: t.destinataire, agent: t.agent, type: t.type_op as 'envoi' | 'service'
+                }));
+            }
+        } catch (err: any) {
+            console.warn('Erreur chargement transactions CSV:', err.message);
+        }
+
+        const esc = (v: string | number | undefined | null) => `"${String(v || '').replace(/"/g, '""')}"`;
+        const lines: string[] = [];
+
+        lines.push(`"Rapport Journalier du ${new Date(selectedDate).toLocaleDateString('fr-FR')}"`);
+        lines.push("");
+        lines.push('"RÉSUMÉ"');
+        lines.push(['Agence', 'Report ($)', 'Nb Envois', 'Montant Envois ($)', 'Frais ($)', 'Nb Services', 'Montant Services ($)', 'Dépenses ($)', 'Mouv+ ($)', 'Mouv- ($)', 'Solde ($)'].map(esc).join(';'));
+
+        const summaryRows = details.length > 0
+            ? details.map(a => [a.name, a.opening_balance, a.nb_envois, a.envois, a.frais, a.nb_services, a.services, a.depenses, a.mouv_plus, a.mouv_minus, a.solde])
+            : [['(Agence sélectionnée)', dailyData.opening_balance, dailyData.nb_envois, dailyData.total_envois_montant, dailyData.total_frais, dailyData.nb_services, dailyData.total_services_montant, dailyData.total_depenses, dailyData.total_mouv_plus, dailyData.total_mouv_minus, dailyData.solde]];
+
+        summaryRows.forEach(r => lines.push(r.map(esc).join(';')));
+
+        if (transactions.length > 0) {
+            const envois = transactions.filter(t => t.type === 'envoi');
+            const services = transactions.filter(t => t.type === 'service');
+
+            lines.push("");
+            lines.push('"DÉTAILS DES ENVOIS"');
+            lines.push(['Code', 'Montant ($)', 'Frais ($)', 'Expéditeur', 'Destinataire', 'Agent Envoi'].map(esc).join(';'));
+            envois.forEach(t => lines.push([t.code, t.montant, t.frais, t.expediteur, t.destinataire, t.agent].map(esc).join(';')));
+
+            lines.push("");
+            lines.push('"DÉTAILS DES SERVICES"');
+            lines.push(['Code', 'Montant ($)', 'Frais ($)', 'Expéditeur', 'Destinataire', 'Agent Service'].map(esc).join(';'));
+            services.forEach(t => lines.push([t.code, t.montant, t.frais, t.expediteur, t.destinataire, t.agent].map(esc).join(';')));
+        }
+
+        const csv = lines.join('\n');
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `rapport-journalier-${selectedDate}-${agName}.csv`; a.click();
+        URL.revokeObjectURL(url);
     };
 
     const handleExportCsvWeekly = () => {
@@ -325,9 +380,9 @@ const Reports = () => {
 
     if (loadingAgencies) {
         return (
-            <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
-                <Loader2 size={56} className="animate-spin text-primary-600" />
-                <p className="font-black uppercase tracking-widest text-xs text-slate-400">Chargement...</p>
+            <div className="flex flex-col items-center justify-center h-[60vh] gap-3">
+                <Loader2 size={40} className="animate-spin text-indigo-600" />
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Chargement des données...</p>
             </div>
         );
     }
@@ -335,85 +390,120 @@ const Reports = () => {
     const isLoadingTab = (tab === 'daily' && loadingDaily) || (tab === 'weekly' && loadingWeekly) || (tab === 'monthly' && loadingMonthly);
 
     return (
-        <div className="space-y-8 animate-fade-in pb-10">
-            {/* Header */}
-            <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="space-y-8 animate-fade-in pb-16">
+            {/* Header & Mode Switch Tabs */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-black text-slate-900 dark:text-white uppercase tracking-tighter">Centre de Rapports</h1>
-                    <p className="text-slate-500 dark:text-slate-400 mt-1 text-xs font-bold uppercase tracking-widest">Synthèse par période • Journalier · Hebdomadaire · Mensuel</p>
+                    <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white font-display tracking-tight">
+                        Rapports & Audit Bilan
+                    </h1>
+                    <p className="text-xs text-slate-400 font-medium mt-1">
+                        Analyses consolidées et bilans comptables exportables
+                    </p>
                 </div>
-                <div className="flex gap-1 p-1.5 bg-slate-100 dark:bg-slate-800/50 rounded-[2rem] border-2 border-slate-200/50 dark:border-slate-800 overflow-x-auto">
+
+                <div className="flex items-center gap-1.5 p-1.5 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 self-start sm:self-auto">
                     {TABS.map(t => {
                         const Icon = t.icon;
                         const active = tab === t.id;
                         return (
-                            <button key={t.id} onClick={() => handleTabChange(t.id)}
-                                className={`flex items-center gap-2 px-6 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${active ? 'bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xl' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
-                                <Icon size={16} />{t.label}
+                            <button
+                                key={t.id}
+                                onClick={() => handleTabChange(t.id)}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                                    active
+                                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                            >
+                                <Icon size={16} />
+                                <span>{t.label}</span>
                             </button>
                         );
                     })}
                 </div>
-            </header>
+            </div>
 
-            {/* Filter Bar */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col xl:flex-row gap-4 items-center">
-                <div className="flex flex-wrap items-center gap-4 flex-1 w-full">
-                    {/* Agency */}
+            {/* Filter & Export Toolbar */}
+            <div className="glass-card p-4 rounded-2xl flex flex-col md:flex-row gap-4 items-center justify-between">
+                <div className="flex flex-wrap items-center gap-3 flex-1 w-full">
+                    {/* Agency Selector */}
                     <div className="relative min-w-[200px] flex-1">
-                        <Building size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <select value={selectedAgency ?? ''} onChange={e => setSelectedAgency(e.target.value ? Number(e.target.value) : null)}
-                            className="w-full pl-12 pr-6 py-3.5 text-sm font-bold rounded-2xl border-2 border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-slate-700 dark:text-slate-200 outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer">
+                        <Building size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <select
+                            value={selectedAgency ?? ''}
+                            onChange={e => setSelectedAgency(e.target.value ? Number(e.target.value) : null)}
+                            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
                             <option value="">Toutes les agences</option>
                             {agencies.map(a => <option key={a.id} value={a.id}>{a.nom}</option>)}
                         </select>
                     </div>
-                    {/* Date selector per tab */}
+
+                    {/* Date Pickers */}
                     {tab === 'daily' && (
-                        <div className="relative flex-1 min-w-[180px]">
-                            <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
-                                className="w-full pl-12 pr-4 py-3.5 text-sm font-black rounded-2xl border-2 border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-slate-700 dark:text-slate-200 outline-none focus:border-primary-500 transition-all" />
+                        <div className="relative min-w-[170px]">
+                            <Calendar size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                type="date"
+                                value={selectedDate}
+                                onChange={e => setSelectedDate(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
                         </div>
                     )}
                     {tab === 'weekly' && (
-                        <div className="relative flex-1 min-w-[180px]">
-                            <CalendarRange size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input type="week" value={(() => { const d = new Date(weekStart); const jan4 = new Date(d.getFullYear(), 0, 4); const wk = Math.ceil(((d.getTime() - jan4.getTime()) / 86400000 + jan4.getDay() + 1) / 7); return `${d.getFullYear()}-W${String(wk).padStart(2, '0')}`; })()}
+                        <div className="relative min-w-[170px]">
+                            <CalendarRange size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                type="week"
+                                value={(() => { const d = new Date(weekStart); const jan4 = new Date(d.getFullYear(), 0, 4); const wk = Math.ceil(((d.getTime() - jan4.getTime()) / 86400000 + jan4.getDay() + 1) / 7); return `${d.getFullYear()}-W${String(wk).padStart(2, '0')}`; })()}
                                 onChange={e => { if (e.target.value) { const [y, w] = e.target.value.split('-W').map(Number); const jan4 = new Date(y, 0, 4); const d = new Date(jan4.getTime() + (w - 1) * 7 * 86400000); setWeekStart(getMonday(d).toISOString().substring(0, 10)); } }}
-                                className="w-full pl-12 pr-4 py-3.5 text-sm font-black rounded-2xl border-2 border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-slate-700 dark:text-slate-200 outline-none focus:border-primary-500 transition-all" />
+                                className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
                         </div>
                     )}
                     {tab === 'monthly' && (
-                        <div className="relative flex-1 min-w-[180px]">
-                            <CalendarDays size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-                                className="w-full pl-12 pr-4 py-3.5 text-sm font-black rounded-2xl border-2 border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-slate-700 dark:text-slate-200 outline-none focus:border-primary-500 transition-all" />
+                        <div className="relative min-w-[170px]">
+                            <CalendarDays size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                type="month"
+                                value={selectedMonth}
+                                onChange={e => setSelectedMonth(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
                         </div>
                     )}
                 </div>
-                <div className="flex gap-2">
-                    <button onClick={handleRefresh}
-                        className={`p-4 bg-white dark:bg-slate-800 border-2 border-slate-100 dark:border-slate-700 rounded-2xl text-slate-400 hover:text-primary-600 transition-all active:scale-90 shadow-sm ${isLoadingTab ? 'animate-spin pointer-events-none' : ''}`}
-                        title="Actualiser">
-                        <RefreshCcw size={20} />
+
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <button
+                        onClick={handleRefresh}
+                        className={`p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition-all ${isLoadingTab ? 'animate-spin' : ''}`}
+                        title="Actualiser"
+                    >
+                        <RefreshCcw size={18} />
                     </button>
-                    <button onClick={tab === 'daily' ? handleExportCsvDaily : tab === 'weekly' ? handleExportCsvWeekly : handleExportCsvMonthly}
-                        className="flex items-center gap-2 px-5 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all active:scale-95 shadow-lg shadow-emerald-600/20">
-                        <Download size={16} /> CSV
+                    <button
+                        onClick={tab === 'daily' ? handleExportCsvDaily : tab === 'weekly' ? handleExportCsvWeekly : handleExportCsvMonthly}
+                        className="btn-secondary text-xs px-3.5 py-2"
+                    >
+                        <Download size={15} /> CSV
                     </button>
-                    <button onClick={tab === 'daily' ? handleExportDaily : tab === 'weekly' ? handleExportWeekly : handleExportMonthly}
-                        className="flex items-center gap-2 px-6 py-3.5 bg-primary-600 hover:bg-primary-700 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all active:scale-95 shadow-lg shadow-primary-600/20">
-                        <Printer size={16} /> PDF
+                    <button
+                        onClick={tab === 'daily' ? handleExportDaily : tab === 'weekly' ? handleExportWeekly : handleExportMonthly}
+                        className="btn-primary text-xs px-4 py-2"
+                    >
+                        <Printer size={15} /> PDF
                     </button>
                 </div>
             </div>
 
-            {/* Tab content with loader overlay */}
+            {/* Tab Body */}
             <div className="relative">
                 {isLoadingTab && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 dark:bg-slate-900/60 rounded-[2rem] backdrop-blur-sm">
-                        <Loader2 size={40} className="animate-spin text-primary-600" />
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 dark:bg-[#060612]/70 rounded-3xl backdrop-blur-xs">
+                        <Loader2 size={36} className="animate-spin text-indigo-600" />
                     </div>
                 )}
                 {tab === 'daily' && <DailyTab data={dailyData} date={selectedDate} />}
@@ -426,79 +516,54 @@ const Reports = () => {
 
 // ===== DAILY TAB =====
 const DailyTab = ({ data, date }: { data: DailyReportRPC; date: string }) => (
-    <div className="space-y-8">
+    <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Report de la veille" value={`${fmt(data.opening_balance)} $`} icon={FileText} color="text-slate-600" bg="bg-slate-100 dark:bg-slate-800" />
-            <StatCard label="Total Envois (montant)" value={`${fmt(data.total_envois_montant)} $`} icon={TrendingUp} color="text-blue-600" bg="bg-blue-50 dark:bg-blue-900/20" />
-            <StatCard label="Total Services" value={`${fmt(data.total_services_montant)} $`} icon={Activity} color="text-violet-600" bg="bg-violet-50 dark:bg-violet-900/20" />
-            <StatCard label="Frais Collectés" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600" bg="bg-emerald-50 dark:bg-emerald-900/20" />
+            <StatCard label="Report veille" value={`${fmt(data.opening_balance)} $`} icon={FileText} color="text-slate-500" bg="bg-slate-500/10" />
+            <StatCard label="Volume Envois" value={`${fmt(data.total_envois_montant)} $`} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Volume Services" value={`${fmt(data.total_services_montant)} $`} icon={Activity} color="text-purple-600 dark:text-purple-400" bg="bg-purple-500/10" />
+            <StatCard label="Frais Réseau" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Mouvements +" value={`${fmt(data.total_mouv_plus)} $`} icon={ArrowUpCircle} color="text-emerald-600" bg="bg-emerald-50 dark:bg-emerald-900/20" />
-            <StatCard label="Mouvements -" value={`${fmt(data.total_mouv_minus)} $`} icon={ArrowDownCircle} color="text-orange-500" bg="bg-orange-50 dark:bg-orange-900/20" />
-            <StatCard label="Solde en Main" value={`${fmt(data.solde)} $`} icon={Wallet} color="text-primary-600" bg="bg-primary-50 dark:bg-primary-900/20" />
-            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={TrendingDown} color="text-emerald-600" bg="bg-emerald-50 dark:bg-emerald-900/20" />
+            <StatCard label="Mouvements +" value={`${fmt(data.total_mouv_plus)} $`} icon={ArrowUpCircle} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
+            <StatCard label="Mouvements -" value={`${fmt(data.total_mouv_minus)} $`} icon={ArrowDownCircle} color="text-amber-600 dark:text-amber-400" bg="bg-amber-500/10" />
+            <StatCard label="Solde en Main" value={`${fmt(data.solde)} $`} icon={Wallet} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={TrendingDown} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
         </div>
-        {/* Counts summary */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {[
-                { l: 'Total Dépenses', v: `${fmt(data.total_depenses)} $` },
-                { l: 'Nb Envois', v: String(data.nb_envois) },
-                { l: 'Nb Services', v: String(data.nb_services) },
-                { l: 'Solde Final', v: `${fmt(data.solde)} $` },
-            ].map(x => (
-                <div key={x.l} className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 text-center">
-                    <p className="text-2xl font-black text-slate-900 dark:text-white">{x.v}</p>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{x.l}</p>
-                </div>
-            ))}
-        </div>
-        {/* Formule recap */}
-        <div className="bg-slate-50 dark:bg-slate-800/40 rounded-[2rem] border border-slate-200 dark:border-slate-700 p-6">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Formule Solde en Main</p>
-            <p className="font-mono text-sm text-slate-700 dark:text-slate-300">
-                {fmt(data.opening_balance)} (report)
-                {' + '}{fmt(data.total_envois_montant)} (envois)
-                {' + '}{fmt(data.total_frais)} (frais)
-                {' − '}{fmt(data.total_services_montant)} (services)
-                {' + '}{fmt(data.total_mouv_plus)} (mouv+)
-                {' − '}{fmt(data.total_mouv_minus)} (mouv−)
-                {' − '}{fmt(data.total_depenses)} (dép.)
-                {' = '}<strong className="text-primary-600">{fmt(data.solde)} $</strong>
-            </p>
-        </div>
-        {/* Agency breakdown */}
+
+        {/* Agency Breakdown Table */}
         {data.agencies_detail && data.agencies_detail.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-slate-100 dark:border-slate-800">
-                    <h3 className="font-black text-slate-900 dark:text-white uppercase tracking-tight text-sm">Détail par Agence</h3>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">{fmtDate(date)}</p>
+            <div className="glass-card rounded-3xl overflow-hidden">
+                <div className="p-5 border-b border-slate-100 dark:border-slate-800">
+                    <h3 className="font-bold text-slate-900 dark:text-white text-base font-display">Détail du Bilan par Agence</h3>
+                    <p className="text-xs text-slate-400">Synthèse du {fmtDate(date)}</p>
                 </div>
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead className="bg-slate-50 dark:bg-slate-800/80">
-                            <tr className="text-slate-400 font-black uppercase text-[10px] tracking-widest">
-                                <th className="px-6 py-4">Agence</th>
-                                <th className="px-6 py-4 text-right">Envois ($)</th>
-                                <th className="px-6 py-4 text-right">Frais ($)</th>
-                                <th className="px-6 py-4 text-right">Services ($)</th>
-                                <th className="px-6 py-4 text-right">Dépenses ($)</th>
-                                <th className="px-6 py-4 text-right">Mouv+ ($)</th>
-                                <th className="px-6 py-4 text-right">Mouv- ($)</th>
-                                <th className="px-6 py-4 text-right">Solde ($)</th>
+                    <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-400 font-bold uppercase text-[10px] tracking-wider">
+                            <tr>
+                                <th className="px-5 py-3 text-left">Agence</th>
+                                <th className="px-5 py-3 text-right">Report ($)</th>
+                                <th className="px-5 py-3 text-right">Envois ($)</th>
+                                <th className="px-5 py-3 text-right">Frais ($)</th>
+                                <th className="px-5 py-3 text-right">Services ($)</th>
+                                <th className="px-5 py-3 text-right">Dépenses ($)</th>
+                                <th className="px-5 py-3 text-right">Mouv+ ($)</th>
+                                <th className="px-5 py-3 text-right">Mouv- ($)</th>
+                                <th className="px-5 py-3 text-right">Solde ($)</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50 font-mono">
                             {data.agencies_detail.map(a => (
                                 <tr key={a.agence_id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                                    <td className="px-6 py-4 font-black text-slate-900 dark:text-white">{a.name}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-slate-700 dark:text-slate-300 tabular-nums">{fmt(a.envois)}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-emerald-600 tabular-nums">{fmt(a.frais)}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-violet-600 tabular-nums">{fmt(a.services)}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-red-500 tabular-nums">{fmt(a.depenses)}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-emerald-600 tabular-nums">{fmt(a.mouv_plus)}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-orange-500 tabular-nums">{fmt(a.mouv_minus)}</td>
-                                    <td className={`px-6 py-4 text-right font-black tabular-nums ${a.solde >= 0 ? 'text-primary-600' : 'text-red-600'}`}>{fmt(a.solde)}</td>
+                                    <td className="px-5 py-3.5 font-bold font-sans text-slate-900 dark:text-white">{a.name}</td>
+                                    <td className="px-5 py-3.5 text-right text-slate-500">{fmt(a.opening_balance)}</td>
+                                    <td className="px-5 py-3.5 text-right text-slate-700 dark:text-slate-300">{fmt(a.envois)}</td>
+                                    <td className="px-5 py-3.5 text-right text-emerald-600 font-bold">{fmt(a.frais)}</td>
+                                    <td className="px-5 py-3.5 text-right text-purple-600">{fmt(a.services)}</td>
+                                    <td className="px-5 py-3.5 text-right text-red-500">{fmt(a.depenses)}</td>
+                                    <td className="px-5 py-3.5 text-right text-green-500">{fmt(a.mouv_plus)}</td>
+                                    <td className="px-5 py-3.5 text-right text-orange-500">{fmt(a.mouv_minus)}</td>
+                                    <td className={`px-5 py-3.5 text-right font-extrabold ${a.solde >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-red-500'}`}>{fmt(a.solde)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -511,87 +576,27 @@ const DailyTab = ({ data, date }: { data: DailyReportRPC; date: string }) => (
 
 // ===== WEEKLY TAB =====
 const WeeklyTab = ({ data, from, to }: { data: WeeklyReportRPC; from: string; to: string }) => (
-    <div className="space-y-8">
+    <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <StatCard label="Total Envois" value={`${fmt(data.total_envois)} $`} icon={TrendingUp} color="text-blue-600" bg="bg-blue-50 dark:bg-blue-900/20" />
-            <StatCard label="Total Services" value={`${fmt(data.total_services)} $`} icon={Activity} color="text-violet-600" bg="bg-violet-50 dark:bg-violet-900/20" />
-            <StatCard label="Frais Collectés" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600" bg="bg-emerald-50 dark:bg-emerald-900/20" />
-            <StatCard label="Total Dépenses" value={`${fmt(data.total_depenses)} $`} icon={Receipt} color="text-red-500" bg="bg-red-50 dark:bg-red-900/20" />
-            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={Wallet} color="text-primary-600" bg="bg-primary-50 dark:bg-primary-900/20" />
-            <StatCard label="Taux de Service" value={`${Number(data.taux_service).toFixed(1)}%`} icon={Percent} color="text-amber-600" bg="bg-amber-50 dark:bg-amber-900/20" />
+            <StatCard label="Total Envois" value={`${fmt(data.total_envois)} $`} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Total Services" value={`${fmt(data.total_services)} $`} icon={Activity} color="text-purple-600 dark:text-purple-400" bg="bg-purple-500/10" />
+            <StatCard label="Frais Collectés" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
+            <StatCard label="Total Dépenses" value={`${fmt(data.total_depenses)} $`} icon={Receipt} color="text-red-500" bg="bg-red-500/10" />
+            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={Wallet} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Taux de Service" value={`${Number(data.taux_service).toFixed(1)}%`} icon={Percent} color="text-amber-500" bg="bg-amber-500/10" />
         </div>
-        {/* Stats table */}
-        <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800">
-                <h3 className="font-black text-slate-900 dark:text-white uppercase tracking-tight text-sm">Statistiques Détaillées</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Semaine du {fmtDate(from)} au {fmtDate(to)}</p>
-            </div>
-            <table className="w-full text-left">
-                <thead className="bg-slate-50 dark:bg-slate-800/80"><tr className="text-slate-400 font-black uppercase text-[10px] tracking-widest">
-                    <th className="px-8 py-5">Métrique</th><th className="px-8 py-5 text-right">Montant ($)</th><th className="px-8 py-5 text-right">Nombre</th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {[
-                        { m: 'Total Envois', v: data.total_envois, n: data.nb_envois },
-                        { m: 'Total Services', v: data.total_services, n: data.nb_services },
-                        { m: 'Frais Collectés', v: data.total_frais, n: '—' },
-                        { m: 'Total Dépenses', v: data.total_depenses, n: '—' },
-                        { m: 'Revenu Net', v: data.revenu_net, n: '—', bold: true },
-                    ].map(r => (
-                        <tr key={r.m} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                            <td className={`px-8 py-5 ${r.bold ? 'font-black text-slate-900 dark:text-white' : 'font-bold text-slate-600 dark:text-slate-300'}`}>{r.m}</td>
-                            <td className={`px-8 py-5 text-right tabular-nums ${r.bold ? 'font-black text-primary-600 text-lg' : 'font-bold text-slate-900 dark:text-white'}`}>{fmt(r.v)}</td>
-                            <td className="px-8 py-5 text-right font-bold text-slate-400">{r.n}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-        {/* Agency leaderboard */}
         {data.agencies_ranking && data.agencies_ranking.length > 0 && <AgencyLeaderboard agencies={data.agencies_ranking} mode="weekly" />}
     </div>
 );
 
 // ===== MONTHLY TAB =====
 const MonthlyTab = ({ data, monthLabel }: { data: MonthlyReportRPC; monthLabel: string }) => (
-    <div className="space-y-8">
+    <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Total Envois" value={`${fmt(data.total_envois)} $`} icon={TrendingUp} color="text-blue-600" bg="bg-blue-50 dark:bg-blue-900/20" />
-            <StatCard label="Total Services" value={`${fmt(data.total_services)} $`} icon={Activity} color="text-violet-600" bg="bg-violet-50 dark:bg-violet-900/20" />
-            <StatCard label="Frais Collectés" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600" bg="bg-emerald-50 dark:bg-emerald-900/20" />
-            <StatCard label="Total Dépenses" value={`${fmt(data.total_depenses)} $`} icon={Receipt} color="text-red-500" bg="bg-red-50 dark:bg-red-900/20" />
-            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={Wallet} color="text-primary-600" bg="bg-primary-50 dark:bg-primary-900/20" />
-            <StatCard label="Taux de Service" value={`${Number(data.taux_service).toFixed(1)}%`} icon={Percent} color="text-amber-600" bg="bg-amber-50 dark:bg-amber-900/20" />
-            <StatCard label="Marge Nette" value={`${Number(data.marge_nette).toFixed(1)}%`} icon={TrendingUp} color="text-cyan-600" bg="bg-cyan-50 dark:bg-cyan-900/20" />
-            <StatCard label="Moy. / Transaction" value={`${fmt(data.moy_transaction)} $`} icon={BarChart3} color="text-indigo-600" bg="bg-indigo-50 dark:bg-indigo-900/20" />
-        </div>
-        {/* Analysis table */}
-        <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800">
-                <h3 className="font-black text-slate-900 dark:text-white uppercase tracking-tight text-sm">Analyse Détaillée</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">{monthLabel}</p>
-            </div>
-            <table className="w-full text-left">
-                <thead className="bg-slate-50 dark:bg-slate-800/80"><tr className="text-slate-400 font-black uppercase text-[10px] tracking-widest">
-                    <th className="px-8 py-5">Indicateur</th><th className="px-8 py-5 text-right">Valeur</th><th className="px-8 py-5">Détail</th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {[
-                        { i: "Volume d'Affaires", v: data.total_envois + data.total_services, d: `${data.nb_total} transactions` },
-                        { i: 'Envois', v: data.total_envois, d: `${data.nb_envois} opérations` },
-                        { i: 'Services', v: data.total_services, d: `${data.nb_services} opérations` },
-                        { i: 'Frais Collectés', v: data.total_frais, d: '—' },
-                        { i: 'Dépenses', v: data.total_depenses, d: '—' },
-                        { i: 'Résultat Net', v: data.revenu_net, d: `Marge : ${Number(data.marge_nette).toFixed(1)}%`, bold: true },
-                    ].map(r => (
-                        <tr key={r.i} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                            <td className={`px-8 py-5 ${r.bold ? 'font-black text-slate-900 dark:text-white' : 'font-bold text-slate-600 dark:text-slate-300'}`}>{r.i}</td>
-                            <td className={`px-8 py-5 text-right tabular-nums ${r.bold ? 'font-black text-primary-600 text-lg' : 'font-bold text-slate-900 dark:text-white'}`}>{fmt(r.v)} $</td>
-                            <td className="px-8 py-5 font-medium text-slate-400 text-sm">{r.d}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+            <StatCard label="Total Envois" value={`${fmt(data.total_envois)} $`} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Total Services" value={`${fmt(data.total_services)} $`} icon={Activity} color="text-purple-600 dark:text-purple-400" bg="bg-purple-500/10" />
+            <StatCard label="Frais Collectés" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
+            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={Wallet} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
         </div>
         {data.agencies_ranking && data.agencies_ranking.length > 0 && <AgencyLeaderboard agencies={data.agencies_ranking} mode="monthly" />}
     </div>
@@ -599,32 +604,27 @@ const MonthlyTab = ({ data, monthLabel }: { data: MonthlyReportRPC; monthLabel: 
 
 // ===== AGENCY LEADERBOARD =====
 const AgencyLeaderboard = ({ agencies, mode }: { agencies: AgencyRankingEntry[]; mode: 'weekly' | 'monthly' }) => (
-    <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
-            <Trophy size={20} className="text-amber-500" />
-            <h3 className="font-black text-slate-900 dark:text-white uppercase tracking-tight text-sm">Classement des Agences</h3>
+    <div className="glass-card rounded-3xl overflow-hidden">
+        <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+            <Trophy size={18} className="text-amber-500" />
+            <h3 className="font-bold text-slate-900 dark:text-white text-base font-display">Classement des Agences</h3>
         </div>
-        <table className="w-full text-left">
-            <thead className="bg-blue-50 dark:bg-blue-900/20"><tr className="text-slate-500 font-black uppercase text-[10px] tracking-widest">
-                <th className="px-8 py-5">#</th><th className="px-8 py-5">Agence</th>
-                {mode === 'weekly' ? <><th className="px-8 py-5 text-right">Opérations</th><th className="px-8 py-5 text-right">Volume ($)</th><th className="px-8 py-5 text-right">Revenu ($)</th></> :
-                    <><th className="px-8 py-5 text-right">Volume ($)</th><th className="px-8 py-5 text-right">Services ($)</th><th className="px-8 py-5 text-right">Résultat ($)</th><th className="px-8 py-5">Performance</th></>}
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-400 font-bold uppercase text-[10px]">
+                <tr>
+                    <th className="px-5 py-3">#</th>
+                    <th className="px-5 py-3">Agence</th>
+                    <th className="px-5 py-3 text-right">Volume ($)</th>
+                    <th className="px-5 py-3 text-right">Revenu ($)</th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50 font-mono">
                 {agencies.map((a, i) => (
                     <tr key={a.agence_id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                        <td className="px-8 py-5 font-black text-slate-400">{i + 1}</td>
-                        <td className="px-8 py-5 font-black text-slate-900 dark:text-white">{a.name}</td>
-                        {mode === 'weekly' ? <>
-                            <td className="px-8 py-5 text-right font-bold text-slate-600 dark:text-slate-300">{(a.nb_ops ?? (a.nb_envois + a.nb_services))}</td>
-                            <td className="px-8 py-5 text-right font-bold text-slate-900 dark:text-white tabular-nums">{fmt(a.volume)}</td>
-                            <td className={`px-8 py-5 text-right font-black tabular-nums ${a.revenu >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmt(a.revenu)}</td>
-                        </> : <>
-                            <td className="px-8 py-5 text-right font-bold text-slate-900 dark:text-white tabular-nums">{fmt(a.volume)}</td>
-                            <td className="px-8 py-5 text-right font-bold text-slate-600 dark:text-slate-300 tabular-nums">{fmt(a.services)}</td>
-                            <td className={`px-8 py-5 text-right font-black tabular-nums ${a.revenu >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmt(a.revenu)}</td>
-                            <td className="px-8 py-5 font-bold text-slate-400">{a.volume > 0 ? `${((a.revenu / a.volume) * 100).toFixed(1)}%` : '0%'}</td>
-                        </>}
+                        <td className="px-5 py-3.5 font-bold font-sans text-slate-400">#{i + 1}</td>
+                        <td className="px-5 py-3.5 font-bold font-sans text-slate-900 dark:text-white">{a.name}</td>
+                        <td className="px-5 py-3.5 text-right text-slate-900 dark:text-white font-bold">{fmt(a.volume)}</td>
+                        <td className={`px-5 py-3.5 text-right font-extrabold ${a.revenu >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmt(a.revenu)}</td>
                     </tr>
                 ))}
             </tbody>

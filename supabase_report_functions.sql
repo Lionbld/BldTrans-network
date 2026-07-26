@@ -77,7 +77,7 @@ BEGIN
   -- Agrégats globaux
   agg AS (
     SELECT
-      COALESCE(SUM(e.montant), 0)                               AS total_envois_montant,
+      COALESCE(SUM(e.montant + e.frais), 0)                      AS total_envois_montant,
       COALESCE(SUM(e.frais), 0)                                  AS total_frais,
       COALESCE((SELECT SUM(s.montant) FROM services s), 0)      AS total_services_montant,
       COALESCE((SELECT SUM(d.montant) FROM dep d), 0)           AS total_depenses,
@@ -93,7 +93,7 @@ BEGIN
     SELECT
       ag.id AS agence_id,
       ag.nom AS agence_nom,
-      COALESCE(SUM(e.montant), 0)                                        AS envois_montant,
+      COALESCE(SUM(e.montant + e.frais), 0)                              AS envois_montant,
       COALESCE(SUM(e.frais), 0)                                          AS frais_total,
       COALESCE((SELECT SUM(s.montant) FROM services s WHERE s.agence_id = ag.id), 0) AS services_total,
       COALESCE((SELECT SUM(d.montant) FROM dep d WHERE d.agence_depense = ag.id), 0) AS depenses_total,
@@ -117,11 +117,10 @@ BEGIN
     'total_mouv_minus',       agg.total_mouv_minus,
     'nb_envois',              agg.nb_envois,
     'nb_services',            agg.nb_services,
-    -- Solde = opening + (envois montant+frais) - services montant + mouv+ - mouv- - depenses
+    -- Solde = opening + total_envois (TTC) - services + mouv+ - mouv- - depenses
     'solde',
       agg.opening_balance
       + agg.total_envois_montant
-      + agg.total_frais
       - agg.total_services_montant
       + agg.total_mouv_plus
       - agg.total_mouv_minus
@@ -145,7 +144,6 @@ BEGIN
             'solde',
               r.opening_balance
               + r.envois_montant
-              + r.frais_total
               - r.services_total
               + r.mouv_plus_total
               - r.mouv_minus_total
@@ -203,7 +201,7 @@ BEGIN
   ),
   agg AS (
     SELECT
-      COALESCE(SUM(e.montant), 0)                           AS total_envois,
+      COALESCE(SUM(e.montant + e.frais), 0)                 AS total_envois,
       COALESCE(SUM(e.frais), 0)                              AS total_frais,
       COUNT(e.id)                                            AS nb_envois,
       COALESCE((SELECT SUM(s.montant) FROM services s), 0)  AS total_services,
@@ -215,7 +213,7 @@ BEGIN
     SELECT
       ag.id   AS agence_id,
       ag.nom  AS agence_nom,
-      COALESCE(SUM(e.montant), 0)                                        AS volume,
+      COALESCE(SUM(e.montant + e.frais), 0)                              AS volume,
       COALESCE(SUM(e.frais),   0)                                        AS frais,
       COUNT(e.id)                                                         AS nb_envois,
       COALESCE((SELECT COUNT(s.id) FROM services s WHERE s.agence_id = ag.id), 0)  AS nb_services,
@@ -311,7 +309,7 @@ BEGIN
   ),
   agg AS (
     SELECT
-      COALESCE(SUM(e.montant), 0)                           AS total_envois,
+      COALESCE(SUM(e.montant + e.frais), 0)                 AS total_envois,
       COALESCE(SUM(e.frais), 0)                              AS total_frais,
       COUNT(e.id)                                            AS nb_envois,
       COALESCE((SELECT SUM(s.montant) FROM services s), 0)  AS total_services,
@@ -323,7 +321,7 @@ BEGIN
     SELECT
       ag.id   AS agence_id,
       ag.nom  AS agence_nom,
-      COALESCE(SUM(e.montant), 0)                                        AS volume,
+      COALESCE(SUM(e.montant + e.frais), 0)                              AS volume,
       COALESCE(SUM(e.frais),   0)                                        AS frais,
       COUNT(e.id)                                                         AS nb_envois,
       COALESCE((SELECT COUNT(s.id) FROM services s WHERE s.agence_id = ag.id), 0)  AS nb_services,
@@ -392,3 +390,64 @@ $$;
 GRANT EXECUTE ON FUNCTION get_daily_report(date, integer)        TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_weekly_report(date, date, integer) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_monthly_report(integer, integer, integer) TO anon, authenticated;
+
+-- ================================================================
+-- FONCTION 4 : Récupérer le détail des transactions du jour (PDF/CSV)
+-- ================================================================
+CREATE OR REPLACE FUNCTION get_daily_transactions(
+  p_date      date,
+  p_agence_id integer DEFAULT NULL
+)
+RETURNS TABLE (
+  code text,
+  montant numeric,
+  frais numeric,
+  expediteur text,
+  destinataire text,
+  agent text,
+  type_op text
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+AS $$
+BEGIN
+  RETURN QUERY
+  -- 1. Les envois (AUCUN filtre sur etat_trans, car c'est une entrée de caisse au moment de l'envoi)
+  SELECT 
+    t.code,
+    t.montant,
+    t.frais,
+    ce.fullname::text AS expediteur,
+    cd.fullname::text AS destinataire,
+    ae.user_agent::text AS agent,
+    'envoi'::text AS type_op
+  FROM transferts t
+  JOIN agents ae ON ae.id = t.user_envoi
+  LEFT JOIN clients ce ON ce.id = t.expediteur_id
+  LEFT JOIN clients cd ON cd.id = t.destinataire_id
+  WHERE t.date_transfert::date = p_date
+    AND (p_agence_id IS NULL OR ae.agence_agens = p_agence_id)
+
+  UNION ALL
+
+  -- 2. Les services (filtre etat_trans = false, car c'est une sortie de caisse)
+  SELECT 
+    t.code,
+    t.montant,
+    t.frais,
+    ce.fullname::text AS expediteur,
+    cd.fullname::text AS destinataire,
+    aserv.user_agent::text AS agent,
+    'service'::text AS type_op
+  FROM transferts t
+  JOIN agents aserv ON aserv.id = t.user_servi
+  LEFT JOIN clients ce ON ce.ids = t.expediteur_id
+  LEFT JOIN clients cd ON cd.ids = t.destinataire_id
+  WHERE t.date_servi::date = p_date
+    AND t.etat_trans = false
+    AND (p_agence_id IS NULL OR aserv.agence_agens = p_agence_id);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION get_daily_transactions(date, integer) TO anon, authenticated;
