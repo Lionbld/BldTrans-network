@@ -5,7 +5,8 @@ import { useToast } from './ToastProvider';
 import {
     Calendar, Building, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle,
     FileText, BarChart3, Wallet, Receipt, Loader2, DollarSign, RefreshCcw,
-    Printer, CalendarDays, CalendarRange, Trophy, Percent, Activity, Download
+    Printer, CalendarDays, CalendarRange, Trophy, Percent, Activity, Download,
+    ArrowLeftRight, Coins
 } from 'lucide-react';
 import {
     exportDailyPdf, exportWeeklyPdf, exportMonthlyPdf,
@@ -127,10 +128,10 @@ const Reports = () => {
     const fetchDaily = useCallback(async () => {
         setLoadingDaily(true);
         try {
-            const { data, error } = await supabase.rpc('get_daily_report', {
-                p_date: selectedDate,
-                p_agence_id: selectedAgency ?? null,
-            });
+            const args: any = { p_date: selectedDate };
+            if (selectedAgency) args.p_agence_id = selectedAgency;
+            
+            const { data, error } = await supabase.rpc('get_daily_report', args);
             if (error) throw error;
             setDailyData(data as DailyReportRPC ?? EMPTY_DAILY);
         } catch (err: any) {
@@ -145,11 +146,10 @@ const Reports = () => {
     const fetchWeekly = useCallback(async () => {
         setLoadingWeekly(true);
         try {
-            const { data, error } = await supabase.rpc('get_weekly_report', {
-                p_from: weekStart,
-                p_to: weekEnd,
-                p_agence_id: selectedAgency ?? null,
-            });
+            const args: any = { p_from: weekStart, p_to: weekEnd };
+            if (selectedAgency) args.p_agence_id = selectedAgency;
+            
+            const { data, error } = await supabase.rpc('get_weekly_report', args);
             if (error) throw error;
             setWeeklyData(data as WeeklyReportRPC ?? EMPTY_WEEKLY);
         } catch (err: any) {
@@ -165,11 +165,10 @@ const Reports = () => {
         setLoadingMonthly(true);
         try {
             const [y, m] = selectedMonth.split('-').map(Number);
-            const { data, error } = await supabase.rpc('get_monthly_report', {
-                p_year: y,
-                p_month: m,
-                p_agence_id: selectedAgency ?? null,
-            });
+            const args: any = { p_year: y, p_month: m };
+            if (selectedAgency) args.p_agence_id = selectedAgency;
+            
+            const { data, error } = await supabase.rpc('get_monthly_report', args);
             if (error) throw error;
             setMonthlyData(data as MonthlyReportRPC ?? EMPTY_MONTHLY);
         } catch (err: any) {
@@ -224,12 +223,15 @@ const Reports = () => {
         const agenciesDetail = dailyData.agencies_detail?.map(a => ({
             name: a.name,
             report: a.opening_balance,
+            reportLocal: a.opening_balance_local || 0,
             envois: a.envois,
             services: a.services,
             depenses: a.depenses,
             mouvPlus: a.mouv_plus,
             mouvMinus: a.mouv_minus,
             solde: a.solde,
+            soldeLocal: a.solde_local || 0,
+            symboleLocal: a.symbole || '',
             nbEnvois: a.nb_envois,
             nbServices: a.nb_services,
         }));
@@ -238,12 +240,14 @@ const Reports = () => {
             agencyName: selectedAgencyName,
             date: selectedDate,
             report: dailyData.opening_balance,
+            reportLocal: dailyData.opening_balance_local || 0,
             services: dailyData.total_services_montant,
             envois: dailyData.total_envois_montant,
             depenses: dailyData.total_depenses,
             mouvPlus: dailyData.total_mouv_plus,
             mouvMinus: dailyData.total_mouv_minus,
             solde: dailyData.solde,
+            soldeLocal: dailyData.solde_local || 0,
             revenuNet: dailyData.revenu_net,
             totalEnvoisMontant: dailyData.total_envois_montant,
             totalServicesMontant: dailyData.total_services_montant,
@@ -323,11 +327,11 @@ const Reports = () => {
         lines.push(`"Rapport Journalier du ${new Date(selectedDate).toLocaleDateString('fr-FR')}"`);
         lines.push("");
         lines.push('"RÉSUMÉ"');
-        lines.push(['Agence', 'Report ($)', 'Nb Envois', 'Montant Envois ($)', 'Frais ($)', 'Nb Services', 'Montant Services ($)', 'Dépenses ($)', 'Mouv+ ($)', 'Mouv- ($)', 'Solde ($)'].map(esc).join(';'));
+        lines.push(['Agence', 'Monnaie', 'Report ($)', 'Report Local', 'Nb Envois', 'Montant Envois ($)', 'Frais ($)', 'Nb Services', 'Montant Services ($)', 'Dépenses ($)', 'Mouv+ ($)', 'Mouv- ($)', 'Solde ($)', 'Solde Local'].map(esc).join(';'));
 
         const summaryRows = details.length > 0
-            ? details.map(a => [a.name, a.opening_balance, a.nb_envois, a.envois, a.frais, a.nb_services, a.services, a.depenses, a.mouv_plus, a.mouv_minus, a.solde])
-            : [['(Agence sélectionnée)', dailyData.opening_balance, dailyData.nb_envois, dailyData.total_envois_montant, dailyData.total_frais, dailyData.nb_services, dailyData.total_services_montant, dailyData.total_depenses, dailyData.total_mouv_plus, dailyData.total_mouv_minus, dailyData.solde]];
+            ? details.map(a => [a.name, a.monnaie || 'USD', a.opening_balance, a.opening_balance_local || 0, a.nb_envois, a.envois, a.frais, a.nb_services, a.services, a.depenses, a.mouv_plus, a.mouv_minus, a.solde, a.solde_local || 0])
+            : [['(Agence sélectionnée)', 'USD', dailyData.opening_balance, dailyData.opening_balance_local || 0, dailyData.nb_envois, dailyData.total_envois_montant, dailyData.total_frais, dailyData.nb_services, dailyData.total_services_montant, dailyData.total_depenses, dailyData.total_mouv_plus, dailyData.total_mouv_minus, dailyData.solde, dailyData.solde_local || 0]];
 
         summaryRows.forEach(r => lines.push(r.map(esc).join(';')));
 
@@ -518,17 +522,25 @@ const Reports = () => {
 const DailyTab = ({ data, date }: { data: DailyReportRPC; date: string }) => (
     <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Report veille" value={`${fmt(data.opening_balance)} $`} icon={FileText} color="text-slate-500" bg="bg-slate-500/10" />
-            <StatCard label="Volume Envois" value={`${fmt(data.total_envois_montant)} $`} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
-            <StatCard label="Volume Services" value={`${fmt(data.total_services_montant)} $`} icon={Activity} color="text-purple-600 dark:text-purple-400" bg="bg-purple-500/10" />
-            <StatCard label="Frais Réseau" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
+            <StatCard label="Report veille USD" value={`${fmt(data.opening_balance)} $`} icon={FileText} color="text-slate-500" bg="bg-slate-500/10" />
+            <StatCard label="Volume Envois USD" value={`${fmt(data.total_envois_montant)} $`} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Volume Services USD" value={`${fmt(data.total_services_montant)} $`} icon={Activity} color="text-purple-600 dark:text-purple-400" bg="bg-purple-500/10" />
+            <StatCard label="Frais Réseau USD" value={`${fmt(data.total_frais)} $`} icon={DollarSign} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Mouvements +" value={`${fmt(data.total_mouv_plus)} $`} icon={ArrowUpCircle} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
-            <StatCard label="Mouvements -" value={`${fmt(data.total_mouv_minus)} $`} icon={ArrowDownCircle} color="text-amber-600 dark:text-amber-400" bg="bg-amber-500/10" />
-            <StatCard label="Solde en Main" value={`${fmt(data.solde)} $`} icon={Wallet} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
-            <StatCard label="Revenu Net" value={`${fmt(data.revenu_net)} $`} icon={TrendingDown} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
+            <StatCard label="Mouvements + USD" value={`${fmt(data.total_mouv_plus)} $`} icon={ArrowUpCircle} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
+            <StatCard label="Mouvements - USD" value={`${fmt(data.total_mouv_minus)} $`} icon={ArrowDownCircle} color="text-amber-600 dark:text-amber-400" bg="bg-amber-500/10" />
+            <StatCard label="Solde en Main USD" value={`${fmt(data.solde)} $`} icon={Wallet} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-500/10" />
+            <StatCard label="Revenu Net USD" value={`${fmt(data.revenu_net)} $`} icon={TrendingDown} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-500/10" />
         </div>
+
+        {/* Local Currency Summary Cards (if present) */}
+        {(data.solde_local !== undefined && data.solde_local !== 0) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                <StatCard label="Report veille (Monnaie Locale)" value={fmt(data.opening_balance_local || 0)} icon={Coins} color="text-purple-500" bg="bg-purple-500/10" />
+                <StatCard label="Solde Caisse en Monnaie Locale" value={fmt(data.solde_local || 0)} icon={Coins} color="text-indigo-500" bg="bg-indigo-500/10" />
+            </div>
+        )}
 
         {/* Agency Breakdown Table */}
         {data.agencies_detail && data.agencies_detail.length > 0 && (
@@ -541,29 +553,32 @@ const DailyTab = ({ data, date }: { data: DailyReportRPC; date: string }) => (
                     <table className="w-full text-left text-xs">
                         <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-400 font-bold uppercase text-[10px] tracking-wider">
                             <tr>
-                                <th className="px-5 py-3 text-left">Agence</th>
-                                <th className="px-5 py-3 text-right">Report ($)</th>
-                                <th className="px-5 py-3 text-right">Envois ($)</th>
-                                <th className="px-5 py-3 text-right">Frais ($)</th>
-                                <th className="px-5 py-3 text-right">Services ($)</th>
-                                <th className="px-5 py-3 text-right">Dépenses ($)</th>
-                                <th className="px-5 py-3 text-right">Mouv+ ($)</th>
-                                <th className="px-5 py-3 text-right">Mouv- ($)</th>
-                                <th className="px-5 py-3 text-right">Solde ($)</th>
+                                <th className="px-4 py-3 text-left">Agence</th>
+                                <th className="px-4 py-3 text-right">Report ($)</th>
+                                <th className="px-4 py-3 text-right">Report Local</th>
+                                <th className="px-4 py-3 text-right">Envois ($)</th>
+                                <th className="px-4 py-3 text-right">Frais ($)</th>
+                                <th className="px-4 py-3 text-right">Services ($)</th>
+                                <th className="px-4 py-3 text-right">Dépenses ($)</th>
+                                <th className="px-4 py-3 text-right">Solde ($)</th>
+                                <th className="px-4 py-3 text-right">Solde Local</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50 font-mono">
                             {data.agencies_detail.map(a => (
                                 <tr key={a.agence_id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                                    <td className="px-5 py-3.5 font-bold font-sans text-slate-900 dark:text-white">{a.name}</td>
-                                    <td className="px-5 py-3.5 text-right text-slate-500">{fmt(a.opening_balance)}</td>
-                                    <td className="px-5 py-3.5 text-right text-slate-700 dark:text-slate-300">{fmt(a.envois)}</td>
-                                    <td className="px-5 py-3.5 text-right text-emerald-600 font-bold">{fmt(a.frais)}</td>
-                                    <td className="px-5 py-3.5 text-right text-purple-600">{fmt(a.services)}</td>
-                                    <td className="px-5 py-3.5 text-right text-red-500">{fmt(a.depenses)}</td>
-                                    <td className="px-5 py-3.5 text-right text-green-500">{fmt(a.mouv_plus)}</td>
-                                    <td className="px-5 py-3.5 text-right text-orange-500">{fmt(a.mouv_minus)}</td>
-                                    <td className={`px-5 py-3.5 text-right font-extrabold ${a.solde >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-red-500'}`}>{fmt(a.solde)}</td>
+                                    <td className="px-4 py-3 font-bold font-sans text-slate-900 dark:text-white">
+                                        {a.name}
+                                        {a.symbole && <span className="ml-1 text-[10px] font-mono text-indigo-500">({a.symbole})</span>}
+                                    </td>
+                                    <td className="px-4 py-3 text-right text-slate-500">{fmt(a.opening_balance)}</td>
+                                    <td className="px-4 py-3 text-right text-slate-500">{fmt(a.opening_balance_local || 0)}</td>
+                                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{fmt(a.envois)}</td>
+                                    <td className="px-4 py-3 text-right text-emerald-600 font-bold">{fmt(a.frais)}</td>
+                                    <td className="px-4 py-3 text-right text-purple-600">{fmt(a.services)}</td>
+                                    <td className="px-4 py-3 text-right text-red-500">{fmt(a.depenses)}</td>
+                                    <td className={`px-4 py-3 text-right font-extrabold ${a.solde >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-red-500'}`}>{fmt(a.solde)}</td>
+                                    <td className={`px-4 py-3 text-right font-extrabold ${ (a.solde_local || 0) >= 0 ? 'text-purple-600 dark:text-purple-400' : 'text-red-500'}`}>{fmt(a.solde_local || 0)} {a.symbole || ''}</td>
                                 </tr>
                             ))}
                         </tbody>

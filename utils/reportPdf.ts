@@ -93,11 +93,12 @@ export interface DailyPdfData {
     report: number; services: number; envois: number; depenses: number;
     mouvPlus: number; mouvMinus: number; solde: number; revenuNet: number;
     totalEnvoisMontant: number; totalServicesMontant: number;
+    reportLocal?: number; soldeLocal?: number; symboleLocal?: string;
     transactions: { code: string; montant: number; frais: number; expediteur: string; destinataire: string; agent: string; type: 'envoi' | 'service' }[];
     agenciesDetail?: {
-        name: string; report: number; envois: number; services: number;
-        depenses: number; mouvPlus: number; mouvMinus: number; solde: number;
-        nbEnvois: number; nbServices: number;
+        name: string; report: number; reportLocal?: number; envois: number; services: number;
+        depenses: number; mouvPlus: number; mouvMinus: number; solde: number; soldeLocal?: number;
+        symboleLocal?: string; nbEnvois: number; nbServices: number;
     }[];
 }
 
@@ -121,8 +122,16 @@ export function exportDailyPdf(d: DailyPdfData) {
       <div class="metric-box"><span class="metric-label">Mouvements +</span><span class="metric-value positive">+${fmt(d.mouvPlus)} $</span></div>
       <div class="metric-box"><span class="metric-label">Mouvements -</span><span class="metric-value negative">-${fmt(d.mouvMinus)} $</span></div>
       <div class="metric-box highlight"><span class="metric-label">Revenu Net</span><span class="metric-value positive">${fmt(d.revenuNet)} $</span></div>
-      <div class="metric-box" style="background:#0f172a;border:none;"><span class="metric-label" style="color:#94a3b8">Solde en Main</span><span class="metric-value" style="color:white">${fmt(d.solde)} $</span></div>
+      <div class="metric-box" style="background:#0f172a;border:none;"><span class="metric-label" style="color:#94a3b8">Solde en Main USD</span><span class="metric-value" style="color:white">${fmt(d.solde)} $</span></div>
     </div>`;
+
+    if (d.soldeLocal !== undefined && d.soldeLocal !== 0) {
+        html += `
+        <div class="metrics-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="metric-box"><span class="metric-label">Report Veille Local</span><span class="metric-value">${fmt(d.reportLocal || 0)} ${d.symboleLocal || ''}</span></div>
+          <div class="metric-box highlight" style="background:#f3e8ff;border-color:#d8b4fe;"><span class="metric-label">Solde Caisse Monnaie Locale</span><span class="metric-value" style="color:#7e22ce;">${fmt(d.soldeLocal)} ${d.symboleLocal || ''}</span></div>
+        </div>`;
+    }
 
     if (d.agenciesDetail && d.agenciesDetail.length > 0) {
         html += `<hr class="dashed"/><h2>Détails par Agence</h2>`;
@@ -142,8 +151,16 @@ export function exportDailyPdf(d: DailyPdfData) {
             <div class="agency-metric"><span class="metric-label">Mouvements -</span><span class="metric-value negative">-${fmt(a.mouvMinus)} $</span></div>
           </div>
           <div class="solde-box">
-            <span class="solde-label">Solde en Main Final</span>
-            <span class="solde-value ${a.solde >= 0 ? 'positive' : 'negative'}">${fmt(a.solde)} $</span>
+            <div>
+              <span class="solde-label">Solde en Main Final USD</span>
+              <div class="solde-value ${a.solde >= 0 ? 'positive' : 'negative'}">${fmt(a.solde)} $</div>
+            </div>
+            ${a.soldeLocal ? `
+            <div style="text-align:right;">
+              <span class="solde-label">Solde Monnaie Locale</span>
+              <div class="solde-value positive" style="color:#a855f7;">${fmt(a.soldeLocal)} ${a.symboleLocal || ''}</div>
+            </div>
+            ` : ''}
           </div>
         </div>`;
         }

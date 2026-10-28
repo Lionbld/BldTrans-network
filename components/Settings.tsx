@@ -12,15 +12,17 @@ import {
     AlertTriangle,
     Monitor,
     Database,
-    Smartphone
+    Smartphone,
+    Coins,
+    DollarSign
 } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { supabase } from '../supabaseClient';
-import { SystemSettings } from '../types';
+import { SystemSettings, Pays } from '../types';
 
 const Settings = () => {
     const { showToast } = useToast();
-    const [activeTab, setActiveTab] = useState<'general' | 'financial' | 'security' | 'appearance'>('general');
+    const [activeTab, setActiveTab] = useState<'general' | 'financial' | 'currency' | 'security' | 'appearance'>('general');
     const [isSaving, setIsSaving] = useState(false);
     const [loading, setLoading] = useState(true);
 
@@ -35,15 +37,20 @@ const Settings = () => {
         montant_max_versement: 3000
     });
 
+    const [paysList, setPaysList] = useState<Pays[]>([]);
+    const [savingPaysId, setSavingPaysId] = useState<number | null>(null);
+
     const tabs = [
         { id: 'general', label: 'Général', icon: Globe },
         { id: 'financial', label: 'Financier', icon: CreditCard },
+        { id: 'currency', label: 'Taux de Change', icon: Coins },
         { id: 'security', label: 'Sécurité', icon: ShieldCheck },
         { id: 'appearance', label: 'Apparence', icon: Palette },
     ];
 
     useEffect(() => {
         fetchSettings();
+        fetchPays();
     }, []);
 
     const fetchSettings = async () => {
@@ -64,6 +71,21 @@ const Settings = () => {
             console.error('Fetch settings error:', e);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchPays = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('pays')
+                .select('*')
+                .order('name');
+
+            if (!error && data) {
+                setPaysList(data);
+            }
+        } catch (e) {
+            console.error('Fetch pays error:', e);
         }
     };
 
@@ -88,6 +110,27 @@ const Settings = () => {
         }
     };
 
+    const handleUpdateRate = async (paysId: number, newRate: number) => {
+        setSavingPaysId(paysId);
+        try {
+            const { error } = await supabase
+                .from('pays')
+                .update({ taux_change: newRate })
+                .eq('id', paysId);
+
+            if (error) {
+                showToast('error', 'Erreur taux', error.message);
+            } else {
+                showToast('success', 'Taux mis à jour', 'Le taux de change a été réactualisé.');
+                setPaysList(prev => prev.map(p => p.id === paysId ? { ...p, taux_change: newRate } : p));
+            }
+        } catch (e: any) {
+            showToast('error', 'Erreur réseau', e.message);
+        } finally {
+            setSavingPaysId(null);
+        }
+    };
+
     const handleChange = (key: keyof SystemSettings, value: any) => {
         setSettings(prev => ({ ...prev, [key]: value }));
     };
@@ -109,7 +152,7 @@ const Settings = () => {
                         Configuration du Système
                     </h1>
                     <p className="text-xs text-slate-400 font-medium mt-1">
-                        Règles métier, commissions globales et préférences réseau
+                        Règles métier, commissions globales et taux de change
                     </p>
                 </div>
                 <button
@@ -255,6 +298,75 @@ const Settings = () => {
                                             className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                                         />
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'currency' && (
+                        <div className="space-y-8 animate-fade-in">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900 dark:text-white font-display flex items-center gap-2 mb-2">
+                                    <Coins className="text-indigo-500" size={20} />
+                                    <span>Taux de Change par Pays</span>
+                                </h3>
+                                <p className="text-xs text-slate-400 mb-6">
+                                    Définissez les taux de change applicables pour les conversions de devises locales (CDF pour RDC, AOA pour l'Angola, etc.) par rapport à l'USD (1 USD = X monnaie locale).
+                                </p>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {paysList.map((pays) => (
+                                        <div
+                                            key={pays.id}
+                                            className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between space-y-4"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <h4 className="font-bold text-slate-900 dark:text-white text-sm">{pays.name}</h4>
+                                                    <p className="text-[11px] text-slate-400 font-mono">
+                                                        Monnaie : <strong className="text-indigo-500">{pays.monnaie || 'USD'}</strong> ({pays.symbole || '$'})
+                                                    </p>
+                                                </div>
+                                                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center font-extrabold text-xs">
+                                                    {pays.symbole || '$'}
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-bold uppercase text-slate-400">
+                                                    1 USD = X {pays.monnaie || 'Local'}
+                                                </label>
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        value={pays.taux_change ?? 1}
+                                                        onChange={(e) => {
+                                                            const val = parseFloat(e.target.value);
+                                                            setPaysList(prev => prev.map(p => p.id === pays.id ? { ...p, taux_change: isNaN(val) ? 1 : val } : p));
+                                                        }}
+                                                        className="flex-1 px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono font-bold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    />
+                                                    <button
+                                                        onClick={() => handleUpdateRate(pays.id, pays.taux_change || 1)}
+                                                        disabled={savingPaysId === pays.id}
+                                                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 disabled:opacity-50"
+                                                    >
+                                                        {savingPaysId === pays.id ? (
+                                                            <RefreshCcw size={14} className="animate-spin" />
+                                                        ) : (
+                                                            <Save size={14} />
+                                                        )}
+                                                        <span>Sauvegarder</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {paysList.length === 0 && (
+                                        <p className="text-xs text-slate-400 col-span-full">Aucun pays configuré en base de données.</p>
+                                    )}
                                 </div>
                             </div>
                         </div>

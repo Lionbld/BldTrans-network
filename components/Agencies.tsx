@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Agence, Ville } from '../types';
+import { Agence, Ville, Pays } from '../types';
 import { useToast } from './ToastProvider';
 import ConfirmModal from './ConfirmModal';
 import AgencyModal from './modals/AgencyModal';
 import CashMovementModal from './modals/CashMovementModal';
+import ExchangeHistoryModal from './modals/ExchangeHistoryModal';
+import { calculateDualBalance } from '../utils/dualBalance';
 import {
   MapPin,
   Search,
@@ -22,7 +24,9 @@ import {
   CheckCircle,
   AlertCircle,
   Filter,
-  Users
+  Users,
+  ArrowLeftRight,
+  Coins
 } from 'lucide-react';
 
 const Agencies = () => {
@@ -42,6 +46,10 @@ const Agencies = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [isCashModalOpen, setIsCashModalOpen] = useState(false);
 
+  // Exchange History Modal
+  const [isExchangeHistoryOpen, setIsExchangeHistoryOpen] = useState(false);
+  const [exchangeAgency, setExchangeAgency] = useState<Agence | null>(null);
+
   useEffect(() => {
     fetchData();
     const handleClickOutside = () => setActiveMenu(null);
@@ -59,25 +67,58 @@ const Agencies = () => {
 
       const { data: villesData } = await supabase
         .from('ville')
+        .select('*, pays_rel:pays(*)');
+
+      const { data: paysData } = await supabase
+        .from('pays')
         .select('*');
 
       const { data: reportsData } = await supabase
         .from('report')
-        .select('agence_report, montant, date_creation')
+        .select('agence_report, montant, montant_local, date_creation')
         .order('date_creation', { ascending: false });
 
       // Calculer le chiffre d'affaires (volume envois + services) du jour par agence
       const todayStr = new Date().toISOString().substring(0, 10);
       const { data: todayTransfers } = await supabase
         .from('transferts')
-        .select('montant, agent_envoi:agents!user_envoi(agence_agens)')
-        .gte('date_transfert', todayStr);
+        .select(`
+          *,
+          agent_envoi:agents!user_envoi(agence_agens),
+          agent_servi:agents!user_servi(agence_agens)
+        `)
+        .or(`date_transfert.gte.${todayStr},date_servi.gte.${todayStr}`);
+
+      // Dépenses du jour
+      const { data: todayDepenses } = await supabase
+        .from('depense')
+        .select('*')
+        .gte('created_at', todayStr);
+
+      // Mouvements Plus & Minus du jour
+      const { data: todayMouvPlus } = await supabase
+        .from('mouvementplus')
+        .select('*')
+        .gte('date_mouvement', todayStr);
+
+      const { data: todayMouvMinus } = await supabase
+        .from('mouvementminus')
+        .select('*')
+        .gte('date_mouvement', todayStr);
+
+      // Mouvements de Change du jour
+      const { data: todayMouvChange } = await supabase
+        .from('mouvement_change')
+        .select('*')
+        .gte('created_at', todayStr);
 
       const volumeByAgency: Record<number, number> = {};
       (todayTransfers || []).forEach((t: any) => {
-        const agId = t.agent_envoi?.agence_agens;
-        if (agId) {
-          volumeByAgency[agId] = (volumeByAgency[agId] || 0) + Number(t.montant || 0);
+        if (t.date_transfert && t.date_transfert.substring(0, 10) === todayStr) {
+          const agId = t.agent_envoi?.agence_agens;
+          if (agId) {
+            volumeByAgency[agId] = (volumeByAgency[agId] || 0) + Number(t.montant || 0);
+          }
         }
       });
 
@@ -95,24 +136,68 @@ const Agencies = () => {
       const sourceReports = reportsData || [];
       const todayLocalStr = new Date().toLocaleDateString('sv'); // Format YYYY-MM-DD local
 
+      const villeMap: Record<number, any> = {};
+      (villesData || []).forEach(v => {
+        villeMap[v.id] = v;
+      });
+
+      const paysMap: Record<number, Pays> = {};
+      (paysData || []).forEach(p => {
+        paysMap[p.id] = p;
+      });
+
       const enriched = (agenciesData || []).map(a => {
+        const agId = a.id;
+        const agVille = a.ville_agence ? villeMap[a.ville_agence] : null;
+        const agPays = agVille?.pays ? paysMap[agVille.pays] || agVille.pays_rel : null;
+
         // Chercher le report du matin enregistré AUJOURD'HUI dans la table 'report'
         const todayReport = sourceReports.find(r => {
-          if (String(r.agence_report) !== String(a.id) || !r.date_creation) return false;
+          if (String(r.agence_report) !== String(agId) || !r.date_creation) return false;
           const repDate = String(r.date_creation).substring(0, 10);
           return repDate === todayStr || repDate === todayLocalStr;
         });
 
-        const latestReport = sourceReports.find(r => String(r.agence_report) === String(a.id));
+        const latestReport = sourceReports.find(r => String(r.agence_report) === String(agId));
+
+        const openingUsd = todayReport ? Number(todayReport.montant || 0) : (latestReport ? Number(latestReport.montant || 0) : 0);
+        const openingLocal = todayReport ? Number(todayReport.montant_local || 0) : (latestReport ? Number(latestReport.montant_local || 0) : 0);
+
+        // Filter operations for this agency today
+        const agEnvois = (todayTransfers || []).filter((t: any) => t.agent_envoi?.agence_agens === agId && t.date_transfert?.substring(0, 10) === todayStr);
+        const agServices = (todayTransfers || []).filter((t: any) => !t.etat_trans && t.agent_servi?.agence_agens === agId && t.date_servi?.substring(0, 10) === todayStr);
+        const agDepenses = (todayDepenses || []).filter((d: any) => d.agence_depense === agId);
+        const agMouvPlus = (todayMouvPlus || []).filter((m: any) => m.agence_mouvplus === agId);
+        const agMouvMinus = (todayMouvMinus || []).filter((m: any) => m.agence_mouvmoins === agId);
+        const agMouvChange = (todayMouvChange || []).filter((mc: any) => mc.agence_id === agId);
+
+        const dualRes = calculateDualBalance({
+          openingBalanceUsd: openingUsd,
+          openingBalanceLocal: openingLocal,
+          envois: agEnvois,
+          services: agServices,
+          depenses: agDepenses,
+          mouvementsPlus: agMouvPlus,
+          mouvementsMinus: agMouvMinus,
+          mouvementsChange: agMouvChange,
+          tauxChange: agPays?.taux_change || 1,
+          symbole: agPays?.symbole || '',
+          monnaie: agPays?.monnaie || ''
+        });
 
         return {
           ...a,
-          balance: a.balance ?? (latestReport ? Number(latestReport.montant) : 0),
-          report_matin: todayReport ? Number(todayReport.montant) : 0,
-          volume_today: volumeByAgency[a.id] || 0,
-          agents_count: agentsCountMap[a.id] || 0
+          pays: agPays,
+          balance: dualRes.soldeUsd,
+          balance_local: dualRes.soldeLocal,
+          balance_equiv_usd: dualRes.equivTotalUsd,
+          report_matin: openingUsd,
+          report_matin_local: openingLocal,
+          volume_today: volumeByAgency[agId] || 0,
+          agents_count: agentsCountMap[agId] || 0
         };
       });
+
       setAgencies(enriched);
 
       if (villesData) {
@@ -136,6 +221,12 @@ const Agencies = () => {
     setModalMode('edit');
     setSelectedAgency(agency);
     setIsModalOpen(true);
+    setActiveMenu(null);
+  };
+
+  const handleOpenExchangeHistory = (agency: Agence) => {
+    setExchangeAgency(agency);
+    setIsExchangeHistoryOpen(true);
     setActiveMenu(null);
   };
 
@@ -191,11 +282,30 @@ const Agencies = () => {
     setActiveMenu(null);
   };
 
-  const handleCashMovementSubmit = async (data: { type: string, montant: number, motif: string }) => {
+  const handleCashMovementSubmit = async (data: any) => {
     if (!selectedAgency) return;
     setIsSubmitting(true);
 
     try {
+      if (data.type === 'change') {
+        const payload = {
+          agence_id: selectedAgency.id,
+          montant_usd: data.montant_usd,
+          montant_local: data.montant_local,
+          sens: data.sens,
+          taux_applique: data.taux_applique,
+          created_at: new Date().toISOString()
+        };
+
+        const { error } = await supabase.from('mouvement_change').insert([payload]);
+        if (error) throw error;
+
+        showToast('success', 'Operation de change enregistrée', `Conversion ${data.sens === 'usd_vers_local' ? 'USD vers Local' : 'Local vers USD'} effectuée.`);
+        setIsCashModalOpen(false);
+        fetchData();
+        return;
+      }
+
       let table = '';
       let payload: any = {
         montant: data.montant
@@ -219,7 +329,6 @@ const Agencies = () => {
       }
 
       const { error } = await supabase.from(table).insert([payload]);
-
       if (error) throw error;
 
       if (data.type === 'report') {
@@ -249,7 +358,6 @@ const Agencies = () => {
 
   const handleDelete = async (id: number) => {
     setIsSubmitting(true);
-    // Conservation de la traçabilité : on ne supprime pas l'agence, on la verrouille/désactive
     const { error } = await supabase.from('agence').update({ verrou: true }).eq('id', id);
     if (!error) {
       showToast('warning', 'Agence suspendue', 'L\'agence a été verrouillée pour conserver la traçabilité des opérations.');
@@ -278,6 +386,8 @@ const Agencies = () => {
 
     return matchesSearch && matchesStatus;
   });
+
+  const fmt = (n: number) => new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
   return (
     <div className="space-y-8 animate-fade-in pb-16">
@@ -356,130 +466,165 @@ const Agencies = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredAgencies.map((agency) => (
-            <div
-              key={agency.id}
-              className="glass-card rounded-3xl p-6 flex flex-col justify-between group hover:-translate-y-1 transition-all duration-300 relative overflow-hidden"
-            >
-              <div>
-                {/* Card Top Action & Badge */}
-                <div className="flex justify-between items-start mb-4">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-white shadow-md ${
-                    agency.verrou ? 'bg-gradient-to-tr from-red-600 to-rose-500 shadow-red-500/20' : 'bg-gradient-to-tr from-indigo-600 to-indigo-500 shadow-indigo-500/20'
-                  }`}>
-                    <Building size={24} />
+          {filteredAgencies.map((agency) => {
+            const hasLocalCurrency = agency.pays && agency.pays.monnaie;
+            const symboleLocal = agency.pays?.symbole || agency.pays?.monnaie || '';
+
+            return (
+              <div
+                key={agency.id}
+                className="glass-card rounded-3xl p-6 flex flex-col justify-between group hover:-translate-y-1 transition-all duration-300 relative overflow-hidden"
+              >
+                <div>
+                  {/* Card Top Action & Badge */}
+                  <div className="flex justify-between items-start mb-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-white shadow-md ${
+                      agency.verrou ? 'bg-gradient-to-tr from-red-600 to-rose-500 shadow-red-500/20' : 'bg-gradient-to-tr from-indigo-600 to-indigo-500 shadow-indigo-500/20'
+                    }`}>
+                      <Building size={24} />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                        !agency.verrou
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                          : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${!agency.verrou ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
+                        {!agency.verrou ? 'Opérationnelle' : 'Verrouillée'}
+                      </span>
+
+                      {/* Context Dropdown Menu */}
+                      <div className="relative">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === agency.id ? null : agency.id); }}
+                          className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        >
+                          <MoreVertical size={18} />
+                        </button>
+
+                        {activeMenu === agency.id && (
+                          <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-[#0f0f23] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 z-30 py-2 animate-scale-up">
+                            <button
+                              onClick={() => handleOpenEdit(agency)}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+                            >
+                              <Edit2 size={14} className="text-indigo-500" /> Modifier fiche
+                            </button>
+                            <button
+                              onClick={() => handleToggleLock(agency)}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+                            >
+                              {agency.verrou ? <Unlock size={14} className="text-emerald-500" /> : <Lock size={14} className="text-amber-500" />}
+                              {agency.verrou ? 'Déverrouiller' : 'Suspendre agence'}
+                            </button>
+                            <button
+                              onClick={() => handleOpenCash(agency)}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 flex items-center gap-2.5 transition-colors"
+                            >
+                              <Wallet size={14} /> Mouvement de caisse
+                            </button>
+                            <button
+                              onClick={() => handleOpenExchangeHistory(agency)}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
+                            >
+                              <ArrowLeftRight size={14} /> Historique des changes
+                            </button>
+                            <div className="h-px bg-slate-100 dark:bg-slate-800 my-1"></div>
+                            <button
+                              onClick={() => setConfirmDeleteId(agency.id)}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-500/10 flex items-center gap-2.5 transition-colors"
+                            >
+                              <Trash2 size={14} /> Supprimer
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${
-                      !agency.verrou
-                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                        : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${!agency.verrou ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></span>
-                      {!agency.verrou ? 'Opérationnelle' : 'Verrouillée'}
-                    </span>
+                  {/* Agency Title */}
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white font-display group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                    {agency.nom}
+                  </h3>
+                  <p className="text-xs font-mono font-bold text-slate-400 mt-0.5">
+                    ID: #{agency.id.toString().padStart(4, '0')} &bull; {agency.pays?.name || 'International'}
+                  </p>
 
-                    {/* Context Dropdown Menu */}
-                    <div className="relative">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === agency.id ? null : agency.id); }}
-                        className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                      >
-                        <MoreVertical size={18} />
-                      </button>
+                  {/* Info List */}
+                  <div className="space-y-2.5 my-6">
+                    <div className="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 text-xs">
+                      <MapPin size={15} className="text-slate-400 shrink-0" />
+                      <span className="truncate">{agency.adresse || 'Adresse non renseignée'}, {getVilleName(agency.ville_agence)}</span>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 text-xs">
+                      <Phone size={15} className="text-slate-400 shrink-0" />
+                      <span>{agency.phone || 'Non renseigné'}</span>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 text-xs">
+                      <Users size={15} className="text-slate-400 shrink-0" />
+                      <span>{agency.agents_count || 0} agent{(agency.agents_count || 0) > 1 ? 's' : ''} rattaché{(agency.agents_count || 0) > 1 ? 's' : ''}</span>
+                    </div>
+                    {agency.limite_quotidienne !== null && (
+                      <div className="inline-flex items-center gap-2 text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-3 py-1.5 rounded-xl text-xs font-semibold border border-indigo-500/20">
+                        <ShieldCheck size={14} />
+                        <span>Limite : ${agency.limite_quotidienne.toLocaleString()}/jour</span>
+                      </div>
+                    )}
+                  </div>
 
-                      {activeMenu === agency.id && (
-                        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#0f0f23] rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 z-30 py-2 animate-scale-up">
-                          <button
-                            onClick={() => handleOpenEdit(agency)}
-                            className="w-full text-left px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
-                          >
-                            <Edit2 size={14} className="text-indigo-500" /> Modifier fiche
-                          </button>
-                          <button
-                            onClick={() => handleToggleLock(agency)}
-                            className="w-full text-left px-4 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
-                          >
-                            {agency.verrou ? <Unlock size={14} className="text-emerald-500" /> : <Lock size={14} className="text-amber-500" />}
-                            {agency.verrou ? 'Déverrouiller' : 'Suspendre agence'}
-                          </button>
-                          <button
-                            onClick={() => handleOpenCash(agency)}
-                            className="w-full text-left px-4 py-2.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 flex items-center gap-2.5 transition-colors"
-                          >
-                            <Wallet size={14} /> Mouvement de caisse
-                          </button>
-                          <div className="h-px bg-slate-100 dark:bg-slate-800 my-1"></div>
-                          <button
-                            onClick={() => setConfirmDeleteId(agency.id)}
-                            className="w-full text-left px-4 py-2.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-500/10 flex items-center gap-2.5 transition-colors"
-                          >
-                            <Trash2 size={14} /> Supprimer
-                          </button>
-                        </div>
+                  {/* Metrics Grid (Report Matin & Chiffre du jour) */}
+                  <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100 dark:border-slate-800/60 text-xs">
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Report Matin</span>
+                      <span className="font-mono font-bold text-slate-700 dark:text-slate-300 text-sm">${(agency.report_matin || 0).toLocaleString()}</span>
+                      {hasLocalCurrency && (agency.report_matin_local || 0) > 0 && (
+                        <span className="text-[10px] font-mono text-slate-400 block font-semibold">
+                          {fmt(agency.report_matin_local || 0)} {symboleLocal}
+                        </span>
                       )}
                     </div>
-                  </div>
-                </div>
-
-                {/* Agency Title */}
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white font-display group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                  {agency.nom}
-                </h3>
-                <p className="text-xs font-mono font-bold text-slate-400 mt-0.5">ID: #{agency.id.toString().padStart(4, '0')}</p>
-
-                {/* Info List */}
-                <div className="space-y-2.5 my-6">
-                  <div className="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 text-xs">
-                    <MapPin size={15} className="text-slate-400 shrink-0" />
-                    <span className="truncate">{agency.adresse || 'Adresse non renseignée'}, {getVilleName(agency.ville_agence)}</span>
-                  </div>
-                  <div className="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 text-xs">
-                    <Phone size={15} className="text-slate-400 shrink-0" />
-                    <span>{agency.phone || 'Non renseigné'}</span>
-                  </div>
-                  <div className="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 text-xs">
-                    <Users size={15} className="text-slate-400 shrink-0" />
-                    <span>{agency.agents_count || 0} agent{(agency.agents_count || 0) > 1 ? 's' : ''} rattaché{(agency.agents_count || 0) > 1 ? 's' : ''}</span>
-                  </div>
-                  {agency.limite_quotidienne !== null && (
-                    <div className="inline-flex items-center gap-2 text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 px-3 py-1.5 rounded-xl text-xs font-semibold border border-indigo-500/20">
-                      <ShieldCheck size={14} />
-                      <span>Limite : ${agency.limite_quotidienne.toLocaleString()}/jour</span>
+                    <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                      <span className="text-[10px] font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider block mb-0.5">C.A du Jour</span>
+                      <span className="font-mono font-extrabold text-indigo-600 dark:text-indigo-300 text-sm">${(agency.volume_today || 0).toLocaleString()}</span>
                     </div>
-                  )}
-                </div>
-
-                {/* Metrics Grid (Report Matin & Chiffre du jour) */}
-                <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100 dark:border-slate-800/60 text-xs">
-                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800/80">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Report Matin</span>
-                    <span className="font-mono font-bold text-slate-700 dark:text-slate-300 text-sm">${(agency.report_matin || 0).toLocaleString()}</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                    <span className="text-[10px] font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider block mb-0.5">C.A du Jour</span>
-                    <span className="font-mono font-extrabold text-indigo-600 dark:text-indigo-300 text-sm">${(agency.volume_today || 0).toLocaleString()}</span>
                   </div>
                 </div>
-              </div>
 
-              {/* Balance Bottom Bar */}
-              <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Solde Caisse Estimé</span>
-                  <span className="text-lg font-extrabold text-slate-900 dark:text-white font-mono">${(agency.balance || 0).toLocaleString()}</span>
+                {/* Balance Bottom Bar (Dual Balance USD + Local) */}
+                <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Solde Caisse Estimé</span>
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-lg font-extrabold text-slate-900 dark:text-white font-mono">
+                        ${fmt(agency.balance || 0)}
+                      </span>
+                      {hasLocalCurrency && (
+                        <span className="text-xs font-extrabold text-indigo-600 dark:text-indigo-400 font-mono">
+                          + {fmt(agency.balance_local || 0)} {symboleLocal}
+                        </span>
+                      )}
+                    </div>
+                    {hasLocalCurrency && (
+                      <div className="text-[10px] font-mono text-slate-400 flex items-center gap-1.5">
+                        <span>Total ≈ <strong>${fmt(agency.balance_equiv_usd || 0)}</strong></span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[9px]">
+                          1$ = {agency.pays?.taux_change || 1} {symboleLocal}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleOpenCash(agency)}
+                    className="p-2.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-indigo-600 hover:text-white text-slate-600 dark:text-slate-300 rounded-xl transition-all shrink-0"
+                    title="Gérer la caisse"
+                  >
+                    <Wallet size={16} />
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleOpenCash(agency)}
-                  className="p-2.5 bg-slate-100 dark:bg-slate-800/80 hover:bg-indigo-600 hover:text-white text-slate-600 dark:text-slate-300 rounded-xl transition-all"
-                  title="Gérer la caisse"
-                >
-                  <Wallet size={16} />
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {filteredAgencies.length === 0 && (
             <div className="col-span-full py-16 text-center text-slate-400">
@@ -507,6 +652,16 @@ const Agencies = () => {
         onSubmit={handleCashMovementSubmit}
         isSubmitting={isSubmitting}
         agencyName={selectedAgency?.nom || ''}
+        tauxParDefaut={selectedAgency?.pays?.taux_change || 1}
+        monnaieLocale={selectedAgency?.pays?.monnaie || 'Local'}
+        symboleLocal={selectedAgency?.pays?.symbole || ''}
+      />
+
+      <ExchangeHistoryModal
+        isOpen={isExchangeHistoryOpen}
+        onClose={() => setIsExchangeHistoryOpen(false)}
+        agenceId={exchangeAgency?.id || null}
+        agenceName={exchangeAgency?.nom || ''}
       />
 
       <ConfirmModal

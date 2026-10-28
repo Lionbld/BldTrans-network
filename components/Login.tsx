@@ -2,7 +2,12 @@ import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { Lock, Mail, Loader2, AlertCircle, Building2, ShieldCheck, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
-const Login = () => {
+interface LoginProps {
+  accessError?: string | null;
+  onClearAccessError?: () => void;
+}
+
+const Login = ({ accessError, onClearAccessError }: LoginProps) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -14,6 +19,7 @@ const Login = () => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    onClearAccessError?.();
 
     try {
       const { error } = await supabase.auth.signInWithPassword({
@@ -105,10 +111,10 @@ const Login = () => {
             <p className="text-slate-400 text-sm mt-2">Entrez vos identifiants pour accéder au tableau de bord.</p>
           </div>
 
-          {error && (
+          {(error || accessError) && (
             <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-3 text-red-400 text-sm animate-scale-up">
               <AlertCircle size={20} className="shrink-0" />
-              <span>{error === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : error}</span>
+              <span>{error === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : (error || accessError)}</span>
             </div>
           )}
 

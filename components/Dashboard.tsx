@@ -16,7 +16,8 @@ import {
   Zap,
   ArrowUpRight,
   DollarSign,
-  Layers
+  Layers,
+  Coins
 } from 'lucide-react';
 import {
   AreaChart,
@@ -31,7 +32,7 @@ import {
   Cell
 } from 'recharts';
 import { supabase } from '../supabaseClient';
-import { Transfert, Agence } from '../types';
+import { Transfert, Agence, Pays } from '../types';
 import { useToast } from './ToastProvider';
 
 type Period = 'today' | 'week' | 'month' | 'all';
@@ -144,15 +145,29 @@ const Dashboard = () => {
         transfersQuery = transfersQuery.limit(500);
       }
 
-      const [agenciesRes, transfersRes] = await Promise.all([
+      const [agenciesRes, villesRes, paysRes, transfersRes] = await Promise.all([
         supabase.from('agence').select('*'),
+        supabase.from('ville').select('*'),
+        supabase.from('pays').select('*'),
         transfersQuery
       ]);
 
       if (agenciesRes.error) throw agenciesRes.error;
       if (transfersRes.error) throw transfersRes.error;
 
-      setAgencies(agenciesRes.data || []);
+      const villeMap: Record<number, any> = {};
+      (villesRes.data || []).forEach(v => villeMap[v.id] = v);
+
+      const paysMap: Record<number, Pays> = {};
+      (paysRes.data || []).forEach(p => paysMap[p.id] = p);
+
+      const enrichedAgencies = (agenciesRes.data || []).map(a => {
+        const v = a.ville_agence ? villeMap[a.ville_agence] : null;
+        const p = v?.pays ? paysMap[v.pays] : null;
+        return { ...a, pays: p };
+      });
+
+      setAgencies(enrichedAgencies);
 
       const formattedTransfers = (transfersRes.data || []).map(t => ({
         ...t,
@@ -203,7 +218,18 @@ const Dashboard = () => {
     const servedTransfers = filteredTransfers.filter(t => !t.etat_trans).length;
     const activeAgencies = agencies.filter(a => !a.verrou).length;
 
-    return { totalVolume, totalEnvoisMontant, totalFees, pendingTransfers, servedTransfers, activeAgencies };
+    // Multi-devises local total
+    let totalLocalMap: Record<string, { montant: number, symbole: string }> = {};
+    filteredTransfers.forEach(t => {
+      if (t.envoi_recu_local && t.envoi_recu_local > 0) {
+        // Optionnel : groupement par monnaie si disponible
+        const key = 'Local';
+        if (!totalLocalMap[key]) totalLocalMap[key] = { montant: 0, symbole: '' };
+        totalLocalMap[key].montant += t.envoi_recu_local;
+      }
+    });
+
+    return { totalVolume, totalEnvoisMontant, totalFees, pendingTransfers, servedTransfers, activeAgencies, totalLocalMap };
   }, [filteredTransfers, agencies]);
 
   const chartData = useMemo(() => {
@@ -239,7 +265,6 @@ const Dashboard = () => {
     const agencyStats: Record<string, { name: string, volume: number, count: number }> = {};
 
     filteredTransfers.forEach(t => {
-      // Utiliser l'ID de l'agence comme clé unique pour éviter les doublons de noms
       const key = t.agence_id ? String(t.agence_id) : (t.agence_name || 'Inconnu');
       const name = t.agence_name || 'Inconnu';
       if (!agencyStats[key]) {
@@ -275,7 +300,7 @@ const Dashboard = () => {
           <div className="space-y-2 max-w-xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-semibold">
               <Zap size={14} className="text-indigo-400 animate-pulse" />
-              <span>Réseau BLD Trans Operational</span>
+              <span>Réseau BLD Trans Operational (Multi-Devises USD + Local)</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight font-display">
               Vue globale & performance du réseau

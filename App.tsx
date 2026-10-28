@@ -276,6 +276,9 @@ const App = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
+  // null = vérification en cours, true = superadmin autorisé, false = refusé
+  const [isSuperadmin, setIsSuperadmin] = useState<boolean | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -296,9 +299,50 @@ const App = () => {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Contrôle d'accès : seul un agent marqué superadmin peut utiliser ce portail
+  const userId = session?.user.id;
+  useEffect(() => {
+    if (!userId) {
+      setIsSuperadmin(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSuperadmin(null);
+
+    (async () => {
+      const { data, error } = await supabase
+        .from('agents')
+        .select('superadmin')
+        .eq('user_id', userId);
+
+      if (cancelled) return;
+
+      const allowed = !error && (data || []).some((a: { superadmin: boolean }) => a.superadmin === true);
+
+      if (!allowed) {
+        setAccessError(
+          error
+            ? "Impossible de vérifier vos droits d'accès. Réessayez plus tard."
+            : 'Accès refusé : ce portail est réservé aux super-administrateurs.'
+        );
+        setIsSuperadmin(false);
+        await supabase.auth.signOut();
+        return;
+      }
+
+      setAccessError(null);
+      setIsSuperadmin(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
   // Realtime badge listener for pending transactions
   useEffect(() => {
-    if (!session) return;
+    if (!session || isSuperadmin !== true) return;
 
     const fetchPendingCount = async () => {
       const { count, error } = await supabase
@@ -323,13 +367,13 @@ const App = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session]);
+  }, [session, isSuperadmin]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
 
-  if (loading) {
+  if (loading || (session && isSuperadmin !== true)) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-[#060612] flex items-center justify-center">
         <div className="relative flex flex-col items-center gap-4">
@@ -341,7 +385,7 @@ const App = () => {
   }
 
   if (!session) {
-    return <Login />;
+    return <Login accessError={accessError} onClearAccessError={() => setAccessError(null)} />;
   }
 
   return (
