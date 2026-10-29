@@ -15,7 +15,8 @@ import {
   Bell,
   Search,
   CheckCircle2,
-  Clock
+  Clock,
+  ShieldCheck
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { Session } from '@supabase/supabase-js';
@@ -131,11 +132,14 @@ const Sidebar = ({
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold truncate text-slate-900 dark:text-slate-100 leading-tight">
-                {userEmail || 'Utilisateur'}
+                {userEmail || 'Super-Admin'}
               </p>
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-500">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Connecté
-              </span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[9px] font-extrabold uppercase tracking-wider border border-indigo-500/20">
+                  <ShieldCheck size={11} className="text-indigo-500" /> Super-Admin
+                </span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Session active"></span>
+              </div>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -301,6 +305,7 @@ const App = () => {
 
   // Contrôle d'accès : seul un agent marqué superadmin peut utiliser ce portail
   const userId = session?.user.id;
+
   useEffect(() => {
     if (!userId) {
       setIsSuperadmin(null);
@@ -311,28 +316,39 @@ const App = () => {
     setIsSuperadmin(null);
 
     (async () => {
-      const { data, error } = await supabase
-        .from('agents')
-        .select('superadmin')
-        .eq('user_id', userId);
+      try {
+        // Seul le user_id Supabase Auth fait foi (pas de correspondance par email)
+        const { data, error } = await supabase
+          .from('agents')
+          .select('superadmin')
+          .eq('user_id', userId);
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      const allowed = !error && (data || []).some((a: { superadmin: boolean }) => a.superadmin === true);
+        if (error) {
+          setAccessError("Impossible de vérifier vos droits d'accès. Réessayez plus tard.");
+          setIsSuperadmin(false);
+          await supabase.auth.signOut();
+          return;
+        }
 
-      if (!allowed) {
-        setAccessError(
-          error
-            ? "Impossible de vérifier vos droits d'accès. Réessayez plus tard."
-            : 'Accès refusé : ce portail est réservé aux super-administrateurs.'
-        );
+        const isSuper = (data || []).some((a: { superadmin: boolean }) => a.superadmin === true);
+
+        if (!isSuper) {
+          setAccessError('Accès refusé : Ce portail réseau est strictement réservé au Super-Administrateur. Vos identifiants ne disposent pas des privilèges requis.');
+          setIsSuperadmin(false);
+          await supabase.auth.signOut();
+          return;
+        }
+
+        setAccessError(null);
+        setIsSuperadmin(true);
+      } catch (err: any) {
+        if (cancelled) return;
+        setAccessError("Erreur lors de la vérification de vos privilèges d'accès.");
         setIsSuperadmin(false);
         await supabase.auth.signOut();
-        return;
       }
-
-      setAccessError(null);
-      setIsSuperadmin(true);
     })();
 
     return () => {
@@ -370,21 +386,25 @@ const App = () => {
   }, [session, isSuperadmin]);
 
   const handleLogout = async () => {
+    setIsSuperadmin(null);
+    setAccessError(null);
     await supabase.auth.signOut();
   };
 
-  if (loading || (session && isSuperadmin !== true)) {
+  if (loading || (session && isSuperadmin === null)) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-[#060612] flex items-center justify-center">
         <div className="relative flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin"></div>
-          <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Chargement de BLD Trans...</span>
+          <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
+            Vérification des droits Super-Administrateur...
+          </span>
         </div>
       </div>
     );
   }
 
-  if (!session) {
+  if (!session || isSuperadmin !== true) {
     return <Login accessError={accessError} onClearAccessError={() => setAccessError(null)} />;
   }
 

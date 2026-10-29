@@ -1,11 +1,25 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Lock, Mail, Loader2, AlertCircle, Building2, ShieldCheck, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertCircle, Building2, ShieldCheck, ShieldAlert, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 interface LoginProps {
   accessError?: string | null;
   onClearAccessError?: () => void;
 }
+
+const formatAuthError = (msg?: string | null): string => {
+  if (!msg) return 'Une erreur est survenue lors de la connexion.';
+  if (msg.includes('Invalid login credentials')) {
+    return 'Email ou mot de passe incorrect.';
+  }
+  if (msg.includes('Email not confirmed')) {
+    return 'Votre adresse email n\'est pas encore confirmée.';
+  }
+  if (msg.includes('Too many requests')) {
+    return 'Trop de tentatives infructueuses. Veuillez patienter un instant avant de réessayer.';
+  }
+  return msg;
+};
 
 const Login = ({ accessError, onClearAccessError }: LoginProps) => {
   const [email, setEmail] = useState('');
@@ -15,6 +29,18 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleEmailChange = (val: string) => {
+    setEmail(val);
+    if (error) setError(null);
+    if (accessError) onClearAccessError?.();
+  };
+
+  const handlePasswordChange = (val: string) => {
+    setPassword(val);
+    if (error) setError(null);
+    if (accessError) onClearAccessError?.();
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -22,14 +48,14 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
     onClearAccessError?.();
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
         password,
       });
 
-      if (error) throw error;
+      if (signInErr) throw signInErr;
     } catch (err: any) {
-      setError(err.message || 'Une erreur est survenue lors de la connexion.');
+      setError(formatAuthError(err.message));
     } finally {
       setLoading(false);
     }
@@ -60,7 +86,7 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
         <div className="relative z-10 space-y-6 max-w-lg">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-semibold">
             <ShieldCheck size={16} />
-            <span>Portail d'administration sécurisé</span>
+            <span>Portail Super-Administrateur Réseau</span>
           </div>
           <h1 className="text-4xl xl:text-5xl font-extrabold tracking-tight text-white font-display leading-tight">
             Pilotez vos flux financiers en toute sérénité.
@@ -79,8 +105,8 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
               <p className="text-[11px] text-slate-400 font-medium">Chiffrement SSL</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-white font-mono">24/7</p>
-              <p className="text-[11px] text-slate-400 font-medium">Supervision</p>
+              <p className="text-2xl font-bold text-white font-mono">Super-Admin</p>
+              <p className="text-[11px] text-slate-400 font-medium">Accès Restreint</p>
             </div>
           </div>
         </div>
@@ -107,20 +133,37 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
           </div>
 
           <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[11px] font-bold tracking-wide uppercase mb-3">
+              <ShieldCheck size={14} /> Accès Super-Administrateur
+            </div>
             <h2 className="text-3xl font-extrabold text-white tracking-tight font-display">Connexion au Portail</h2>
-            <p className="text-slate-400 text-sm mt-2">Entrez vos identifiants pour accéder au tableau de bord.</p>
+            <p className="text-slate-400 text-sm mt-1.5">
+              Accès strictement réservé aux comptes dotés des privilèges <span className="text-indigo-400 font-semibold">Super-Admin</span>.
+            </p>
           </div>
 
-          {(error || accessError) && (
+          {/* Erreur de refus d'autorisation Superadmin */}
+          {accessError && !error && (
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-start gap-3 text-red-300 text-sm animate-scale-up">
+              <ShieldAlert size={20} className="shrink-0 text-red-400 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-red-300">Privilèges insuffisants</p>
+                <p className="text-xs text-red-400/90 leading-relaxed">{accessError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Erreur de mot de passe / identifiants */}
+          {error && (
             <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-3 text-red-400 text-sm animate-scale-up">
               <AlertCircle size={20} className="shrink-0" />
-              <span>{error === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : (error || accessError)}</span>
+              <span>{error}</span>
             </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div className="space-y-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">Email Professionnel</label>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">Email Super-Administrateur</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
                   <Mail size={18} />
@@ -129,9 +172,9 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => handleEmailChange(e.target.value)}
                   className="w-full pl-11 pr-4 py-3 bg-[#0f0f23] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm transition-all shadow-inner"
-                  placeholder="agent@bldtrans.com"
+                  placeholder="superadmin@bldtrans.com"
                 />
               </div>
             </div>
@@ -146,7 +189,7 @@ const Login = ({ accessError, onClearAccessError }: LoginProps) => {
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => handlePasswordChange(e.target.value)}
                   className="w-full pl-11 pr-11 py-3 bg-[#0f0f23] border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm transition-all shadow-inner"
                   placeholder="••••••••••••"
                 />
